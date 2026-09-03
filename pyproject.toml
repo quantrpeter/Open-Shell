@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-shell"
+version = "0.0.1"
+description = "Open Shell - a JSON-pipeline shell. pip ships the core; extras come from the website registry."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "World Programming Society" }]
+keywords = ["shell", "json", "pipeline", "cli", "ai", "mcp"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Shells",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://openshell.dev"
+Registry = "https://openshell.dev/registry"
+
+[project.scripts]
+openshell = "openshell:main"
+
+[tool.setuptools]
+py-modules = ["openshell"]
+packages = ["oshell_command"]
+include-package-data = false
+
+# The repo folder is `command/`; it installs as `oshell_command/` so it does
+# not squat the very generic top-level name `command` in site-packages.
+# Extra commands in registry/ are NOT packaged — they are hosted on the website.
+[tool.setuptools.package-dir]
+oshell_command = "command"

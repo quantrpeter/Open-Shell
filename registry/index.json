@@ -1,0 +1,23 @@
+{
+  "name": "openshell",
+  "version": "0.0.1",
+  "description": "Extra and advanced Open Shell commands. Not on PyPI — host this folder on your website.",
+  "commands": [
+    {
+      "name": "count",
+      "file": "commands/count.py",
+      "summary": "Count incoming records",
+      "usage": "count",
+      "tier": "extra",
+      "sha256": "a1edc1f099e520519456b32782b7aacb9b819604d50b62cd866dca388ec11ff0"
+    },
+    {
+      "name": "uniq",
+      "file": "commands/uniq.py",
+      "summary": "Drop consecutive duplicates of a field",
+      "usage": "uniq [.FIELD]",
+      "tier": "extra",
+      "sha256": "902f21e394e4c83633dbcd1c9030320c57b7863cfef5eeb258d25f29aab83c33"
+    }
+  ]
+}

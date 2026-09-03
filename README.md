@@ -14,13 +14,11 @@ oshell> fs.ls -r . | where .size > 10kb | sort-by .size --desc | take 5
 
 Status: **0.0.1** (pre-alpha). Python 3.12+, standard library only.
 
-## Install
-
-The PyPI name is `open-shell` (`openshell` is already taken). The command you
-run is `openshell`.
+The PyPI name is `open-shell-ai` (`openshell` and `open-shell` are taken). The
+command you run is `openshell`.
 
 ```bash
-pip install open-shell
+pip install open-shell-ai
 openshell --version
 ```
 
@@ -207,6 +205,7 @@ squat the name `command` in `site-packages`.
 
 ```bash
 pip install build twine
+rm -rf dist
 python -m build
 twine upload dist/*
 ```
@@ -214,7 +213,7 @@ twine upload dist/*
 Confirm extras stayed off the wheel:
 
 ```bash
-unzip -l dist/open_shell-*.whl | grep -E 'count|uniq|registry' || echo ok
+unzip -l dist/open_shell_ai-*.whl | grep -E 'count|uniq|registry' || echo ok
 ```
 
 Then upload `registry/` to `https://openshell.dev/registry`.

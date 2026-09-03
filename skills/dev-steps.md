@@ -59,7 +59,7 @@ missing these files yields a shell with zero commands.
 
 ## ✅ Step 1c — PyPI core + website extras (DONE)
 
-- PyPI name is **`open-shell`** (`openshell` and `oshell` are already taken).
+- PyPI name is **`open-shell-ai`** (`openshell`, `oshell`, and `open-shell` are taken).
 - The console script is still `openshell`.
 - The wheel ships only `openshell.py` + `command/*.py` (the basic set, including
   `search` / `install` / `remove`).
@@ -68,7 +68,7 @@ missing these files yields a shell with zero commands.
   a local folder with `file:///abs/path/to/registry` while developing.
 
 ```bash
-pip install open-shell
+pip install open-shell-ai
 openshell -c 'search'
 openshell -c 'install count'
 ```
@@ -80,8 +80,9 @@ To publish (needs a PyPI API token; this repo has none stored):
 
 ```bash
 pip install build twine
+rm -rf dist
 python -m build
-twine upload dist/*
+twine upload dist/open_shell_ai-*
 ```
 
 ---

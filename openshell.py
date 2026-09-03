@@ -450,7 +450,7 @@ Usage:
   openshell --version
 
 Install:
-  pip install open-shell    # PyPI ships the core + basic commands
+  pip install open-shell-ai # PyPI ships the core + basic commands
   openshell -c 'search'     # extras live on the website, not PyPI
   openshell -c 'install NAME'
 

@@ -4,7 +4,7 @@ Open Shell (`openshell`) - the AI-era shell for everyone.
 
 A shell whose pipeline carries JSON records instead of text:
 
-    oshell> fs.ls -r . | where .size > 10kb | sort-by .size --desc | take 5
+    oshell> ls -r . | where .size > 10kb | sort-by .size --desc | take 5
 
 This file is the core: the record model, the command registry, the pipeline
 runner, the loader, and the frontends. The commands themselves live one per
@@ -101,7 +101,7 @@ COMMANDS: dict[str, Command] = {}
 
 
 def command(name: str, summary: str, usage: str, *, source: bool = False):
-    """Register a command. Names may contain dots and dashes: `fs.ls`, `sort-by`."""
+    """Register a command. Names may contain dots and dashes: `ls`, `sort-by`."""
     def register(fn):
         COMMANDS[name] = Command(name, fn, summary, usage, source)
         return fn
@@ -393,7 +393,7 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
                              f"`{name}` produces records, so it must start the pipeline")
         if not cmd.source and index == 0:
             raise ShellError("pipe.no_input", f"`{name}` needs input records",
-                             f"e.g. fs.ls | {name} ...")
+                             f"e.g. ls | {name} ...")
         records = cmd.fn(records, args)
 
     for _ in records:  # drain, in case the pipeline ended without a sink
@@ -462,8 +462,8 @@ Commands are loaded at startup from, in order:
 Registry: $OSHELL_REGISTRY_URL  (default https://openshell.dev/registry)
 
 Examples:
-  openshell -c 'fs.ls'
-  openshell -c 'fs.ls -r . | where .size > 10kb | sort-by .size --desc | take 5'
+  openshell -c 'ls'
+  openshell -c 'ls -r . | where .size > 10kb | sort-by .size --desc | take 5'
   openshell -c 'help | select .name .origin'
 """
 
@@ -486,7 +486,7 @@ def main(argv: list[str] | None = None) -> int:
         elif arg == "-c":
             if not args:
                 print_error(ShellError("arg.missing", "-c needs a pipeline",
-                                       "e.g. openshell -c 'fs.ls | take 3'"))
+                                       "e.g. openshell -c 'ls | take 3'"))
                 return 2
             pipeline = args.pop(0)
         else:

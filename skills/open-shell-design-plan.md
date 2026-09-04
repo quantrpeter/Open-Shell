@@ -96,7 +96,7 @@ Six layers, each independently testable. The important property: **the engine ha
 
 The rule: **behavior is identical everywhere by default; platform-native escape hatches are explicit.**
 
-Most "cross-platform" shells fail because they shell out to different binaries per OS. We avoid that by implementing core commands *in Python*, so `fs.ls` returns the same schema on Windows, macOS, and Linux.
+Most "cross-platform" shells fail because they shell out to different binaries per OS. We avoid that by implementing core commands *in Python*, so `ls` returns the same schema on Windows, macOS, and Linux.
 
 | Concern | Approach |
 |---|---|
@@ -158,7 +158,7 @@ The key structural fix over bash: **data and diagnostics are separate channels.*
 
 ### 6.3 Laziness and backpressure
 
-Everything is a generator. `fs.ls -r / | take 5` must not walk your entire disk.
+Everything is a generator. `ls -r / | take 5` must not walk your entire disk.
 
 - Downstream close propagates upstream via `GeneratorExit`, terminating external children.
 - A stage may be *streaming* (`where`, `select`) or *blocking* (`sort-by`, `stats`); blocking stages declare it so the planner and the UI can show "collecting…".
@@ -182,14 +182,14 @@ The "grammar of data" — deliberately borrowed from SQL, jq, and dataframes, be
 Because commands declare output schemas, the parser can check a pipeline *before it runs*:
 
 ```
-> fs.ls | where .siez > 10mb
-  error[E201]: field `siez` does not exist on stream from `fs.ls`
+> ls | where .siez > 10mb
+  error[E201]: field `siez` does not exist on stream from `ls`
    --> line 1:20
     |
-  1 | fs.ls | where .siez > 10mb
+  1 | ls | where .siez > 10mb
     |                ^^^^ did you mean `size`?
     |
-  note: `fs.ls` emits { name: string, size: bytes, modified: datetime, ... }
+  note: `ls` emits { name: string, size: bytes, modified: datetime, ... }
 ```
 
 No shell does this today. It also gives us: schema-driven tab completion of *field names* mid-pipeline, and — critically — **AI-generated pipelines that fail at compile time instead of on your filesystem** (§9.2). Checking is advisory (warn, don't block) when schemas are unknown, so dynamic cases still work.
@@ -212,7 +212,7 @@ Subject to an RFC; the goal is "familiar in 10 minutes to anyone who knows bash 
 
 ```bash
 # 1. Commands are `namespace.verb`; args stay POSIX-familiar
-fs.ls -r ~/code | where .size > 10mb | sort-by .size --desc | take 5
+ls -r ~/code | where .size > 10mb | sort-by .size --desc | take 5
 
 # 2. Leading-dot field access. Unit and duration literals are first-class.
 proc.list | where .cpu > 80% and .started < 1h ago | select .pid .name .cpu
@@ -230,7 +230,7 @@ catch { |e| log.error $e.message; exit 1 }
 
 # 6. Pipelines are values — compose and reuse them
 def big-files [dir: path, min: bytes = 10mb] {
-    fs.ls -r $dir | where .size > $min | sort-by .size --desc
+    ls -r $dir | where .size > $min | sort-by .size --desc
 }
 ```
 
@@ -465,7 +465,7 @@ Every shell-AI product today generates a string and hopes. We can do something c
 
   Proposed pipeline (validated ✓ · reads only · no network):
 
-    fs.ls -r ~/Pictures
+    ls -r ~/Pictures
       | where .size > 5mb
       | with hash: (fs.hash .path)
       | group-by .hash

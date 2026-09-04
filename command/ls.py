@@ -1,4 +1,4 @@
-"""fs.ls - list files as JSON records."""
+"""ls - list files as JSON records."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from openshell import Records, ShellError, command
 
 
-@command("fs.ls", "List files as JSON records", "fs.ls [PATH] [-r] [-a]", source=True)
+@command("ls", "List files as JSON records", "ls [PATH] [-r] [-a]", source=True)
 def fs_ls(_input: Records, args: list[str]) -> Records:
     target = Path(".")
     recursive = show_hidden = False
@@ -18,14 +18,14 @@ def fs_ls(_input: Records, args: list[str]) -> Records:
         elif arg in ("-a", "--all"):
             show_hidden = True
         elif arg.startswith("-"):
-            raise ShellError("arg.unknown", f"fs.ls: unknown flag {arg!r}",
+            raise ShellError("arg.unknown", f"ls: unknown flag {arg!r}",
                              "supported flags: -r/--recursive, -a/--all")
         else:
             target = Path(arg).expanduser()
 
     if not target.exists():
         raise ShellError("fs.not_found", f"no such path: {target}",
-                         "check the path, or run `fs.ls` with no arguments")
+                         "check the path, or run `ls` with no arguments")
 
     entries = target.rglob("*") if recursive else target.iterdir()
     for path in entries:

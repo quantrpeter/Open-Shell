@@ -20,11 +20,11 @@ Standard library only, zero dependencies.
 - Auto-sink: table on a TTY, NDJSON when piped
 
 ```bash
-./openshell.py -c 'fs.ls -r . | where .size > 5kb | sort-by .size --desc | take 5'
+./openshell.py -c 'ls -r . | where .size > 5kb | sort-by .size --desc | take 5'
 python3 -m venv .venv && .venv/bin/pip install -e .   # gives the `openshell` command
 ```
 
-**Done when:** the pipeline above prints a table; `fs.ls -r /usr | take 3` returns in
+**Done when:** the pipeline above prints a table; `ls -r /usr | take 3` returns in
 well under a second (proving laziness); `openshell --version` works from the venv.
 
 ## ✅ Step 1b — One file per command, loaded at startup (DONE)
@@ -34,7 +34,7 @@ adding a command means adding a file, with nothing to register.
 
 - `command/{fs_ls,where,select,sort_by,take,to,help,version}.py`
 - The **decorator declares the name**, not the filename: `sort_by.py` → `sort-by`,
-  `fs_ls.py` → `fs.ls`. Filenames stay valid Python identifiers; command names don't
+  `fs_ls.py` → `ls`. Filenames stay valid Python identifiers; command names don't
   have to be.
 - Load order: `command/` (or `oshell_command/` when installed) →
   `~/.config/oshell/command/` → `$OSHELL_COMMAND_PATH`. Later wins on conflict.
@@ -73,7 +73,7 @@ openshell -c 'search'
 openshell -c 'install count'
 ```
 
-**Done when:** a clean `pip install` of the wheel has `fs.ls` and `install` but
+**Done when:** a clean `pip install` of the wheel has `ls` and `install` but
 not `count`; `install count` against the local `registry/` makes `count` work.
 
 To publish (needs a PyPI API token; this repo has none stored):
@@ -93,7 +93,7 @@ Add `from json` (read NDJSON from stdin). ~15 lines, and it makes Open Shell usa
 *inside* existing bash scripts — the adoption wedge from §8.
 
 **Done when:** `cat data.ndjson | openshell -c 'from json | where .x > 1 | to table'`
-works, and `openshell -c 'fs.ls' | jq .name` still works.
+works, and `openshell -c 'ls' | jq .name` still works.
 
 ## Step 3 — Tests and CI, before more features
 
@@ -120,14 +120,14 @@ Add the `{"$t":"bytes","v":…}` tag layer (§6.1): tagged JSON on the wire, rea
 objects in memory. Then `to table` can print `9.1 MB` and `2h ago`, and
 `where .modified > 7d ago` becomes possible.
 
-**Done when:** `fs.ls | to table` shows human sizes, `to json --plain` strips tags.
+**Done when:** `ls | to table` shows human sizes, `to json --plain` strips tags.
 
 ## Step 6 — The real command SDK
 
 Replace `fn(records, args)` with type-hint-driven commands (§9.1): hints generate the
 arg parser, the help text, **and** the JSON Schema. Docstring examples run as tests.
 
-**Done when:** a command declares only types, and `help --schema fs.ls` emits valid
+**Done when:** a command declares only types, and `help --schema ls` emits valid
 JSON Schema 2020-12.
 
 ## Step 7 — ⭐ The static checker
@@ -136,7 +136,7 @@ With schemas in hand, validate pipelines before running them (§6.5): unknown fi
 type-mismatched comparisons, `did you mean`. This is what no other shell does, and it
 is the foundation for trustworthy AI generation.
 
-**Done when:** `fs.ls | where .siez > 10mb` errors *before* touching the disk, and
+**Done when:** `ls | where .siez > 10mb` errors *before* touching the disk, and
 tab-completion suggests field names mid-pipeline.
 
 ## Step 8 — The text world
@@ -170,7 +170,7 @@ client `install` / `lock` / `audit` / `publish`.
 an MCP server as pipeable commands (§12.1). Command schemas are already JSON Schema
 2020-12, so this is mostly plumbing — the cheapest big win in the project.
 
-**Done when:** Claude/Cursor can call `fs.ls` through your MCP server, and
+**Done when:** Claude/Cursor can call `ls` through your MCP server, and
 `mcp.<server>.<tool> | where …` pipes.
 
 ## Step 12 — ⭐ AI that is checked, not trusted

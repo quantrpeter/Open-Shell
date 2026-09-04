@@ -9,7 +9,7 @@ so every stage is structured, and the same pipeline works on Linux, macOS, and
 Windows.
 
 ```text
-oshell> fs.ls -r . | where .size > 10kb | sort-by .size --desc | take 5
+oshell> ls -r . | where .size > 10kb | sort-by .size --desc | take 5
 ```
 
 Status: **0.0.1** (pre-alpha). Python 3.12+, standard library only.
@@ -41,15 +41,15 @@ on PyPI — they live on the website registry.
 openshell
 
 # One pipeline, then exit
-openshell -c 'fs.ls'
-openshell -c 'fs.ls -r . | where .size > 10kb | sort-by .size --desc | take 5'
+openshell -c 'ls'
+openshell -c 'ls -r . | where .size > 10kb | sort-by .size --desc | take 5'
 openshell -c 'help | select .name .summary'
 
 # Force NDJSON (also the default when stdout is not a TTY)
-openshell --json -c 'fs.ls | select .name .size'
+openshell --json -c 'ls | select .name .size'
 
 # Works inside bash / jq
-openshell -c 'fs.ls | select .name .size' | jq .name
+openshell -c 'ls | select .name .size' | jq .name
 ```
 
 On a terminal, the last stage renders a table. When piped, it writes one JSON
@@ -59,10 +59,10 @@ object per line (NDJSON).
 
 Each command **yields records**. Only sinks (`to json`, `to table`) print.
 `|` passes the record stream downstream. `take 5` stops early, so
-`fs.ls -r /usr | take 3` does not walk the whole tree.
+`ls -r /usr | take 3` does not walk the whole tree.
 
 ```text
-fs.ls -r .          →  {name, path, is_dir, size, modified} …
+ls -r .          →  {name, path, is_dir, size, modified} …
      | where .size > 10kb
      | sort-by .size --desc
      | take 5
@@ -89,7 +89,7 @@ Errors are records, never raw tracebacks:
 
 | Command | Usage | What it does |
 |---|---|---|
-| `fs.ls` | `fs.ls [PATH] [-r] [-a]` | List files as records |
+| `ls` | `ls [PATH] [-r] [-a]` | List files as records |
 | `where` | `where .FIELD [OP VALUE]` | Filter (`>`, `<`, `==`, `!=`, `>=`, `<=`, `=~`) |
 | `select` | `select .FIELD …` | Keep named fields |
 | `sort-by` | `sort-by .FIELD [--desc]` | Sort (buffers the stream) |
@@ -117,7 +117,7 @@ Host the `registry/` folder so this URL exists:
 ```bash
 openshell -c 'search'
 openshell -c 'install count'
-openshell -c 'fs.ls | count'
+openshell -c 'ls | count'
 openshell -c 'remove count'
 ```
 

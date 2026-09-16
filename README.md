@@ -94,9 +94,11 @@ Errors are records, never raw tracebacks:
 | `select` | `select .FIELD …` | Keep named fields |
 | `sort-by` | `sort-by .FIELD [--desc]` | Sort (buffers the stream) |
 | `take` | `take N` | First N records |
+| `substring` | `substring .FIELD START [END]` | Slice a string field (Python indexes) |
 | `to` | `to json\|table [--compact]` | Render the stream |
 | `help` | `help [NAME]` | List loaded commands as records |
 | `command` | `command` | Same idea: every command as a record |
+| `reload` | `reload` | Re-read every command `*.py` from disk |
 | `version` | `version` | Version and runtime |
 | `search` | `search [QUERY]` | List extras on the website registry |
 | `install` | `install NAME` | Download an extra into `~/.config/oshell/command/` |

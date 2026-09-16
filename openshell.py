@@ -36,8 +36,8 @@ __version__ = "0.0.1"
 __all__ = [
     "COMMANDS", "Json", "Records", "ShellError", "__version__", "command",
     "fetch_catalog", "fetch_registry_file", "get_field", "install_from_catalog",
-    "literal", "registry_root", "remove_user_command", "sort_key",
-    "use_color", "user_command_dir",
+    "literal", "registry_root", "reload_commands", "remove_user_command",
+    "sort_key", "use_color", "user_command_dir",
 ]
 
 Json = Any
@@ -241,6 +241,7 @@ def remove_user_command(name: str) -> dict[str, Any]:
 def load_command_file(path: Path) -> list[str]:
     """Exec one command file and return the command names it registered."""
     module_name = f"oshell_command_{path.stem}"
+    sys.modules.pop(module_name, None)
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"no import machinery for {path}")
@@ -275,6 +276,14 @@ def load_commands() -> list[ShellError]:
                     f"{path.name}: {type(err).__name__}: {err}",
                     "fix the file or move it out of the command folder"))
     return problems
+
+
+def reload_commands() -> tuple[list[str], list[ShellError]]:
+    """Drop every registered command and load command files from disk again."""
+    importlib.invalidate_caches()
+    COMMANDS.clear()
+    problems = load_commands()
+    return sorted(COMMANDS), problems
 
 
 # --------------------------------------------------------------------------

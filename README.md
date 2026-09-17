@@ -89,7 +89,24 @@ Errors are records, never raw tracebacks:
 
 | Command | Usage | What it does |
 |---|---|---|
-| `ls` | `ls [PATH] [-r] [-a]` | List files as records |
+| `pwd` | `pwd` | Print the working directory |
+| `ls` | `ls [PATH …] [-r] [-a] [-l]` | List files as records |
+| `cd` | `cd [PATH]` | Change the working directory |
+| `mkdir` | `mkdir [-p] PATH …` | Create directories |
+| `cp` | `cp [-r] SRC … DEST` | Copy files or directories |
+| `mv` | `mv SRC … DEST` | Move or rename files |
+| `rm` | `rm [-r] [-f] PATH …` | Remove files or directories |
+| `cat` | `cat FILE …` | Read files as line records |
+| `less` | `less [-n N] FILE` | First N lines (default 20) |
+| `head` | `head [-n N] FILE` | First N lines (default 10) |
+| `tail` | `tail [-n N] FILE` | Last N lines (default 10) |
+| `grep` | `grep [-i] PATTERN FILE …` | Search files for a pattern |
+| `find` | `find [PATH] [-name GLOB] [-type f\|d] [-size SIZE] [-mtime DAYS]` | Search for files |
+| `ps` | `ps [aux]` | List running processes |
+| `top` / `htop` | `top [-n N]` | List processes by CPU usage |
+| `kill` | `kill [-SIGNAL] PID …` | Terminate a process |
+| `df` | `df [-h] [PATH …]` | Disk space usage |
+| `du` | `du [-s] [-h] [PATH …]` | Directory disk usage |
 | `where` | `where .FIELD [OP VALUE]` | Filter (`>`, `<`, `==`, `!=`, `>=`, `<=`, `=~`) |
 | `select` | `select .FIELD …` | Keep named fields |
 | `sort-by` | `sort-by .FIELD [--desc]` | Sort (buffers the stream) |

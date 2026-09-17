@@ -27,6 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -35,9 +36,11 @@ __version__ = "0.0.1"
 # The surface a command file may rely on: `from openshell import ...`
 __all__ = [
     "COMMANDS", "Json", "Records", "ShellError", "__version__", "command",
-    "fetch_catalog", "fetch_registry_file", "get_field", "install_from_catalog",
-    "literal", "registry_root", "reload_commands", "remove_user_command",
-    "sort_key", "use_color", "user_command_dir",
+    "expand_path", "fetch_catalog", "fetch_registry_file", "file_record",
+    "format_datetime", "get_field", "human_size", "install_from_catalog",
+    "iter_file_lines", "iter_processes", "literal", "parse_args",
+    "registry_root", "reload_commands", "remove_user_command", "sort_key",
+    "use_color", "user_command_dir",
 ]
 
 Json = Any
@@ -292,6 +295,175 @@ def reload_commands() -> tuple[list[str], list[ShellError]]:
 
 SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)(b|kb|mb|gb|tb)$", re.IGNORECASE)
 SIZE_UNITS = {"b": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3, "tb": 1024**4}
+DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def format_datetime(value: datetime | float | int) -> str:
+    """Format a datetime or unix timestamp as `YYYY-MM-DD HH:MM:SS`."""
+    if not isinstance(value, datetime):
+        value = datetime.fromtimestamp(value)
+    elif value.tzinfo is not None:
+        value = value.astimezone().replace(tzinfo=None)
+    return value.strftime(DATETIME_FORMAT)
+
+
+def expand_path(text: str) -> Path:
+    return Path(text).expanduser()
+
+
+def human_size(n: int | float) -> str:
+    """Render a byte count as `1.5M`, `12K`, …"""
+    value = float(n)
+    for unit in ("B", "K", "M", "G", "T", "P"):
+        if abs(value) < 1024 or unit == "P":
+            if unit == "B":
+                return f"{int(value)}B"
+            return f"{value:.1f}{unit}"
+        value /= 1024
+    return f"{int(n)}B"
+
+
+def file_record(path: Path) -> dict[str, Any] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return {
+        "name": path.name,
+        "path": str(path),
+        "is_dir": path.is_dir(),
+        "size": stat.st_size,
+        "modified": format_datetime(stat.st_mtime),
+    }
+
+
+def parse_args(
+    args: list[str],
+    command: str,
+    *,
+    flags: dict[str, str] | None = None,
+    valued: dict[str, str] | None = None,
+) -> tuple[set[str], dict[str, str], list[str]]:
+    """Parse POSIX-ish flags, including clustered shorts like `-la`.
+
+    `flags` maps `-a`/`--all` to a canonical name in the returned set.
+    `valued` maps `-n`/`--name` to a canonical name in the returned dict.
+    `--name=python` is accepted for valued longs.
+    """
+    flags = flags or {}
+    valued = valued or {}
+    supported = ", ".join(sorted(set(flags) | set(valued))) or "none"
+    bools: set[str] = set()
+    opts: dict[str, str] = {}
+    positionals: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            positionals.extend(args[index + 1:])
+            break
+        if arg.startswith("--") and "=" in arg:
+            key, value = arg.split("=", 1)
+            if key not in valued:
+                raise ShellError("arg.unknown", f"{command}: unknown flag {key!r}",
+                                 f"supported flags: {supported}")
+            opts[valued[key]] = value
+            index += 1
+            continue
+        if arg in valued:
+            if index + 1 >= len(args):
+                raise ShellError("arg.missing", f"{command}: {arg} needs a value",
+                                 f"supported flags: {supported}")
+            opts[valued[arg]] = args[index + 1]
+            index += 2
+            continue
+        if arg in flags:
+            bools.add(flags[arg])
+            index += 1
+            continue
+        if arg.startswith("-") and len(arg) > 2 and not arg.startswith("--"):
+            token = f"-{arg[1]}"
+            if token in valued:
+                opts[valued[token]] = arg[2:]
+                index += 1
+                continue
+            for char in arg[1:]:
+                short = f"-{char}"
+                if short in flags:
+                    bools.add(flags[short])
+                else:
+                    raise ShellError("arg.unknown",
+                                     f"{command}: unknown flag {short!r} in {arg!r}",
+                                     f"supported flags: {supported}")
+            index += 1
+            continue
+        if arg.startswith("-") and arg != "-":
+            raise ShellError("arg.unknown", f"{command}: unknown flag {arg!r}",
+                             f"supported flags: {supported}")
+        positionals.append(arg)
+        index += 1
+    return bools, opts, positionals
+
+
+def iter_file_lines(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield `{path, n, text}` records for a text file."""
+    if not path.exists():
+        raise ShellError("fs.not_found", f"no such path: {path}",
+                         "check the path")
+    if path.is_dir():
+        raise ShellError("fs.is_dir", f"{path} is a directory",
+                         "pass a file, or use `ls` / `find`")
+    try:
+        handle = path.open(encoding="utf-8", errors="replace")
+    except OSError as err:
+        raise ShellError("fs.read_failed", f"cannot read {path}: {err}",
+                         "check the path and permissions") from err
+    with handle:
+        for number, line in enumerate(handle, 1):
+            yield {"path": str(path), "n": number, "text": line.rstrip("\n")}
+
+
+def iter_processes() -> Iterator[dict[str, Any]]:
+    """Yield process records from `ps` (macOS and Linux)."""
+    import subprocess
+
+    attempts = [
+        ["ps", "ax", "-o", "pid,ppid,user,%cpu,%mem,rss,state,etime,command"],
+        ["ps", "ax", "-o", "pid,ppid,user,pcpu,pmem,rss,state,etime,command"],
+    ]
+    output = None
+    for cmd in attempts:
+        try:
+            output = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+            break
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    if output is None:
+        raise ShellError("proc.unavailable", "cannot list processes with ps",
+                         "install ps, or run on macOS/Linux")
+
+    lines = output.splitlines()
+    if lines and lines[0].lstrip().lower().startswith("pid"):
+        lines = lines[1:]
+    for line in lines:
+        parts = line.split(None, 8)
+        if len(parts) < 8:
+            continue
+        pid, ppid, user, cpu, mem, rss, state, etime, *rest = parts
+        try:
+            yield {
+                "pid": int(pid),
+                "ppid": int(ppid),
+                "user": user,
+                "cpu": float(cpu),
+                "mem": float(mem),
+                "rss": int(rss),
+                "state": state,
+                "etime": etime,
+                "command": rest[0] if rest else "",
+            }
+        except ValueError:
+            continue
 
 
 def literal(token: str) -> Json:

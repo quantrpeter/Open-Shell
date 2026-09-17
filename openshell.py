@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -36,11 +37,12 @@ __version__ = "0.0.1"
 # The surface a command file may rely on: `from openshell import ...`
 __all__ = [
     "COMMANDS", "Json", "Records", "ShellError", "__version__", "command",
-    "expand_path", "fetch_catalog", "fetch_registry_file", "file_record",
-    "format_datetime", "get_field", "human_size", "install_from_catalog",
-    "iter_file_lines", "iter_processes", "literal", "parse_args",
-    "registry_root", "reload_commands", "remove_user_command", "sort_key",
-    "use_color", "user_command_dir",
+    "command_options", "expand_path", "fetch_catalog", "fetch_registry_file",
+    "file_record", "format_datetime", "get_field", "human_size",
+    "install_from_catalog", "iter_file_lines", "iter_processes", "literal",
+    "parse_args", "print_default_help", "registry_root", "reload_commands",
+    "remove_user_command", "show_command_help", "sort_key", "use_color",
+    "user_command_dir",
 ]
 
 Json = Any
@@ -90,6 +92,9 @@ def print_warning(message: str) -> None:
 # the filename is just a container, the decorator is the source of truth.
 # --------------------------------------------------------------------------
 
+HelpFn = Callable[..., Any]
+
+
 @dataclass
 class Command:
     name: str
@@ -98,15 +103,68 @@ class Command:
     usage: str
     source: bool = False  # produces records; must start a pipeline
     origin: str = field(default="builtin")  # which file provided it
+    help_fn: HelpFn | None = None  # optional `cmd --help` printer
 
 
 COMMANDS: dict[str, Command] = {}
 
+OPTION_TOKEN_RE = re.compile(r"(?<![\w.-])(-{1,2}[A-Za-z][\w-]*)")
+
+
+def command_options(usage: str) -> list[str]:
+    """Flags mentioned in a usage string, in order, plus `--help`."""
+    seen: set[str] = set()
+    options: list[str] = []
+    for token in OPTION_TOKEN_RE.findall(usage):
+        if token not in seen:
+            seen.add(token)
+            options.append(token)
+    if "--help" not in seen:
+        options.append("--help")
+    return options
+
+
+def print_default_help(cmd: Command) -> None:
+    """Default `NAME --help`: summary, usage, and every option in usage."""
+    sys.stdout.write(f"{cmd.name} - {cmd.summary}\n")
+    sys.stdout.write(f"\nUsage:\n  {cmd.usage}\n")
+    options = command_options(cmd.usage)
+    sys.stdout.write("\nOptions:\n")
+    for option in options:
+        suffix = "    Show this help" if option == "--help" else ""
+        sys.stdout.write(f"  {option}{suffix}\n")
+
+
+def show_command_help(cmd: Command) -> None:
+    """Run a command's custom help function, or the default printer."""
+    fn = cmd.help_fn
+    if fn is None:
+        print_default_help(cmd)
+        return
+    params = inspect.signature(fn).parameters
+    result = fn(cmd) if len(params) >= 1 else fn()
+    if result is None:
+        return
+    text = result if isinstance(result, str) else str(result)
+    sys.stdout.write(text if text.endswith("\n") else text + "\n")
+
 
 def command(name: str, summary: str, usage: str, *, source: bool = False):
-    """Register a command. Names may contain dots and dashes: `ls`, `sort-by`."""
+    """Register a command. Names may contain dots and dashes: `ls`, `sort-by`.
+
+    Decorate with `@fn.help` to custom-print `NAME --help`.
+    If not set, `--help` prints usage and every option in that string.
+    """
     def register(fn):
         COMMANDS[name] = Command(name, fn, summary, usage, source)
+
+        def help_decorator(custom: HelpFn) -> HelpFn:
+            for registered in COMMANDS.values():
+                if registered.fn is fn:
+                    registered.help_fn = custom
+            return custom
+
+        fn.help = help_decorator  # type: ignore[attr-defined]
         return fn
     return register
 
@@ -563,18 +621,25 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
         default = "json" if force_json or not sys.stdout.isatty() else "table"
         parsed.append(("to", [default]))
 
-    records: Records = iter(())
-    for index, (name, args) in enumerate(parsed):
+    resolved: list[tuple[Command, list[str]]] = []
+    for name, args in parsed:
         cmd = COMMANDS.get(name)
         if cmd is None:
             raise ShellError("cmd.not_found", f"command not found: {name}",
                              "run `help` for built-ins, or `search` / `install NAME` for extras")
+        if "--help" in args:
+            show_command_help(cmd)
+            return 0
+        resolved.append((cmd, args))
+
+    records: Records = iter(())
+    for index, (cmd, args) in enumerate(resolved):
         if cmd.source and index != 0:
             raise ShellError("pipe.source_not_first",
-                             f"`{name}` produces records, so it must start the pipeline")
+                             f"`{cmd.name}` produces records, so it must start the pipeline")
         if not cmd.source and index == 0:
-            raise ShellError("pipe.no_input", f"`{name}` needs input records",
-                             f"e.g. ls | {name} ...")
+            raise ShellError("pipe.no_input", f"`{cmd.name}` needs input records",
+                             f"e.g. ls | {cmd.name} ...")
         records = cmd.fn(records, args)
 
     for _ in records:  # drain, in case the pipeline ended without a sink

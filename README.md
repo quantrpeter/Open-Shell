@@ -170,7 +170,17 @@ from openshell import Records, command
 @command("greet", "Say hello as a record", "greet [NAME]", source=True)
 def greet(_input: Records, args: list[str]) -> Records:
     yield {"hello": args[0] if args else "world"}
+
+@greet.help
+def greet_help():
+    print("greet [NAME]")
+    print("  Say hello as a JSON record. NAME defaults to world.")
 ```
+
+Every command accepts `--help` (`-h` is left for real flags such as `df -h`).
+If you do not define a help function, Open Shell prints the summary, usage,
+and every option mentioned in the usage string. Define one with `@fn.help`
+to print your own text instead.
 
 No registration step. Files starting with `_` are skipped. A broken file is
 reported and skipped; it does not kill the shell.
@@ -188,6 +198,56 @@ Load order, later wins on a name clash:
 1. `<install>/oshell_command/*.py` — basic set from pip
 2. `~/.config/oshell/command/*.py` — website extras and your files
 3. `$OSHELL_COMMAND_PATH`
+
+How commands load, and how `@command` / `@fn.help` hook into the registry:
+
+```mermaid
+flowchart TD
+    Start(["openshell starts"]) --> Load[load_commands]
+    Load --> Alias["Alias this file as the openshell module"]
+    Alias --> Dirs["Walk command dirs: later wins"]
+
+    subgraph search [Search path]
+        Builtin["1. command/ or oshell_command/"]
+        UserDir["2. ~/.config/oshell/command/"]
+        Extra["3. OSHELL_COMMAND_PATH"]
+        Builtin --> UserDir --> Extra
+    end
+
+    Dirs --> Builtin
+    Extra --> Exists{"Directory exists?"}
+    Exists -->|no| NextDir[Next directory]
+    Exists -->|yes| Files["Each *.py, skip _*"]
+    Files --> Exec[exec_module]
+
+    subgraph hooks [Annotations hook on import]
+        Decorate["@command name, summary, usage, source"]
+        Decorate --> Register["COMMANDS name = Command"]
+        Register --> Attach["Attach fn.help hook"]
+        Attach --> HasHelp{"Custom help defined?"}
+        HasHelp -->|"@fn.help"| Custom[Set help_fn]
+        HasHelp -->|no| Empty[help_fn stays empty]
+    end
+
+    Exec --> Decorate
+    Custom --> Origin["Set origin to filename"]
+    Empty --> Origin
+    Origin --> MoreFiles{"More files?"}
+    MoreFiles -->|yes| Files
+    MoreFiles -->|no| NextDir
+    NextDir --> MoreDirs{"More directories?"}
+    MoreDirs -->|yes| Exists
+    MoreDirs -->|no| Ready(["COMMANDS ready"])
+
+    Ready --> Pipe[run_pipeline]
+    Pipe --> Found{"Command found?"}
+    Found -->|no| Missing[cmd.not_found]
+    Found -->|yes| HelpFlag{"args include --help?"}
+    HelpFlag -->|yes| UseHelp{"help_fn set?"}
+    UseHelp -->|yes| PrintCustom[Call custom help]
+    UseHelp -->|no| PrintDefault[Print usage and options]
+    HelpFlag -->|no| RunFn[Call cmd.fn]
+```
 
 ## CLI
 

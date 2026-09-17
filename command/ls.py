@@ -8,7 +8,7 @@ from openshell import Records, ShellError, command, expand_path, file_record, pa
 
 
 @command("ls", "List files as JSON records", "ls [PATH …] [-r] [-a] [-l]", source=True)
-def fs_ls(_input: Records, args: list[str]) -> Records:
+def ls(_input: Records, args: list[str]) -> Records:
     flags, _opts, paths = parse_args(
         args, "ls",
         flags={
@@ -37,4 +37,14 @@ def fs_ls(_input: Records, args: list[str]) -> Records:
             record = file_record(path)
             if record is not None:
                 yield record
+
+
+@ls.help
+def ls_help() -> None:
+    print("ls [PATH …] [-r] [-a] [-l]")
+    print("  List files as JSON records. PATH defaults to the current directory.")
+    print("  -r, --recursive    Walk directories")
+    print("  -a, --all          Include hidden names")
+    print("  -l, --long         Long listing (accepted; size is always present)")
+    print("  --help             Show this help")
 

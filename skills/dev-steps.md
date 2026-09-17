@@ -32,10 +32,7 @@ well under a second (proving laziness); `openshell --version` works from the ven
 Commands live in `command/`, one file each, discovered by path at startup — so
 adding a command means adding a file, with nothing to register.
 
-- `command/{fs_ls,where,select,sort_by,take,to,help,version}.py`
-- The **decorator declares the name**, not the filename: `sort_by.py` → `sort-by`,
-  `fs_ls.py` → `ls`. Filenames stay valid Python identifiers; command names don't
-  have to be.
+- `command/{ls,where,select,sort_by,take,to,help,version}.py`
 - Load order: `command/` (or `oshell_command/` when installed) →
   `~/.config/oshell/command/` → `$OSHELL_COMMAND_PATH`. Later wins on conflict.
 - A command file that raises is **reported and skipped**, never fatal.

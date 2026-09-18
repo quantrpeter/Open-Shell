@@ -732,18 +732,60 @@ BANNER = (f"Open Shell {__version__}  -  JSON pipelines. "
           "Try `help`, or `exit` or `q` to leave.")
 
 
+def repl_cwd() -> str:
+    """Directory shown in the prompt: logical `$PWD` when it still matches."""
+    try:
+        physical = os.getcwd()
+    except OSError:
+        physical = os.environ.get("PWD") or "?"
+    logical = os.environ.get("PWD")
+    path = physical
+    if logical:
+        try:
+            if os.path.samefile(logical, physical):
+                path = logical
+        except OSError:
+            pass
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    if home != os.sep and path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
+def repl_prompt() -> str:
+    return f"{repl_cwd()}>"
+
+
+def _notify_terminal_cwd() -> None:
+    """Tell the terminal (and VS Code) the process cwd changed."""
+    if not sys.stdout.isatty() or os.environ.get("TERM") == "dumb":
+        return
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return
+    sys.stdout.write(f"\033]7;file://{cwd}\007")
+    sys.stdout.flush()
+
+
 def repl() -> int:
     try:
         import readline  # noqa: F401  - arrow keys and history where available
     except ImportError:
         pass
 
+    try:
+        os.environ.setdefault("PWD", os.getcwd())
+    except OSError:
+        pass
+
     sys.stdout.write(BANNER + "\n")
     while True:
         try:
-            # show current directory
-            line = input(f"{os.getcwd()} oshell> ").strip()
-            # line = input("oshell> ").strip()
+            _notify_terminal_cwd()
+            line = input(repl_prompt()).strip()
         except EOFError:
             sys.stdout.write("\n")
             return 0

@@ -22,5 +22,11 @@ def cd(_input: Records, args: list[str]) -> Records:
     except OSError as err:
         raise ShellError("fs.chdir_failed", f"cannot cd to {target}: {err}",
                          "check the path and permissions") from err
-    path = Path.cwd()
+    if target.is_absolute():
+        logical = os.path.normpath(str(target))
+    else:
+        base = os.environ.get("PWD") or os.getcwd()
+        logical = os.path.normpath(os.path.join(base, str(target)))
+    os.environ["PWD"] = logical
+    path = Path(logical)
     yield {"path": str(path), "name": path.name}

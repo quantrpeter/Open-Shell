@@ -114,6 +114,7 @@ Errors are records, never raw tracebacks:
 | `substring` | `substring .FIELD START [END]` | Slice a string field (Python indexes) |
 | `to` | `to json\|table [--compact]` | Render the stream |
 | `help` | `help [NAME]` | List loaded commands as records |
+| `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`) |
 | `command` | `command` | Same idea: every command as a record |
 | `reload` | `reload` | Re-read every command `*.py` from disk |
 | `version` | `version` | Version and runtime |

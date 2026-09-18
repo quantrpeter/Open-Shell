@@ -32,17 +32,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 # The surface a command file may rely on: `from openshell import ...`
 __all__ = [
     "COMMANDS", "Json", "Records", "ShellError", "__version__", "command",
     "command_options", "expand_path", "fetch_catalog", "fetch_registry_file",
     "file_record", "format_datetime", "get_field", "human_size",
-    "install_from_catalog", "iter_file_lines", "iter_processes", "literal",
-    "parse_args", "print_default_help", "registry_root", "reload_commands",
-    "remove_user_command", "show_command_help", "sort_key", "use_color",
-    "user_command_dir",
+    "history_path", "install_from_catalog", "iter_file_lines", "iter_processes",
+    "literal", "parse_args", "print_default_help", "registry_root",
+    "reload_commands", "remove_user_command", "show_command_help", "sort_key",
+    "use_color", "user_command_dir",
 ]
 
 Json = Any
@@ -182,6 +182,68 @@ SAFE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.py$")
 def user_command_dir() -> Path:
     """Installed extras live here, not in the pip package."""
     return Path.home() / ".config" / "oshell" / "command"
+
+
+HISTORY_RESULT_MAX = 10_000
+
+
+def history_path() -> Path:
+    """Where previously run pipelines are appended, one JSON object per line."""
+    override = os.environ.get("OSHELL_HISTORY")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".openshell_history"
+
+
+class _StdoutCapture:
+    """Mirror writes to the real stdout while keeping a truncated copy."""
+
+    def __init__(self, original, limit: int = HISTORY_RESULT_MAX) -> None:
+        self._original = original
+        self._limit = limit
+        self._chunks: list[str] = []
+        self._size = 0
+
+    def write(self, data) -> int:
+        written = self._original.write(data)
+        text = data if isinstance(data, str) else str(data)
+        if self._size < self._limit and text:
+            piece = text[: self._limit - self._size]
+            self._chunks.append(piece)
+            self._size += len(piece)
+        return written
+
+    def flush(self) -> None:
+        self._original.flush()
+
+    def isatty(self) -> bool:
+        return self._original.isatty()
+
+    def __getattr__(self, name: str):
+        return getattr(self._original, name)
+
+    def captured(self) -> str:
+        return "".join(self._chunks)
+
+
+def append_history(line: str, result: str = "") -> None:
+    """Append one JSON history record: timestamp, command, result."""
+    text = line.strip()
+    if not text:
+        return
+    if len(result) > HISTORY_RESULT_MAX:
+        result = result[:HISTORY_RESULT_MAX]
+    record = {
+        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "command": text,
+        "result": result,
+    }
+    try:
+        path = history_path()
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except OSError:
+        pass
 
 
 def command_dirs() -> list[Path]:
@@ -616,35 +678,50 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
     if not parsed:
         return 0
 
-    # No explicit sink? Render a table for humans, NDJSON for machines.
-    if parsed[-1][0] != "to":
-        default = "json" if force_json or not sys.stdout.isatty() else "table"
-        parsed.append(("to", [default]))
+    original_stdout = sys.stdout
+    capture = _StdoutCapture(original_stdout)
+    error: ShellError | None = None
+    try:
+        sys.stdout = capture
 
-    resolved: list[tuple[Command, list[str]]] = []
-    for name, args in parsed:
-        cmd = COMMANDS.get(name)
-        if cmd is None:
-            raise ShellError("cmd.not_found", f"command not found: {name}",
-                             "run `help` for built-ins, or `search` / `install NAME` for extras")
-        if "--help" in args:
-            show_command_help(cmd)
-            return 0
-        resolved.append((cmd, args))
+        # No explicit sink? Render a table for humans, NDJSON for machines.
+        if parsed[-1][0] != "to":
+            default = "json" if force_json or not sys.stdout.isatty() else "table"
+            parsed.append(("to", [default]))
 
-    records: Records = iter(())
-    for index, (cmd, args) in enumerate(resolved):
-        if cmd.source and index != 0:
-            raise ShellError("pipe.source_not_first",
-                             f"`{cmd.name}` produces records, so it must start the pipeline")
-        if not cmd.source and index == 0:
-            raise ShellError("pipe.no_input", f"`{cmd.name}` needs input records",
-                             f"e.g. ls | {cmd.name} ...")
-        records = cmd.fn(records, args)
+        resolved: list[tuple[Command, list[str]]] = []
+        for name, args in parsed:
+            cmd = COMMANDS.get(name)
+            if cmd is None:
+                raise ShellError("cmd.not_found", f"command not found: {name}",
+                                 "run `help` for built-ins, or `search` / `install NAME` for extras")
+            if "--help" in args:
+                show_command_help(cmd)
+                return 0
+            resolved.append((cmd, args))
 
-    for _ in records:  # drain, in case the pipeline ended without a sink
-        pass
-    return 0
+        records: Records = iter(())
+        for index, (cmd, args) in enumerate(resolved):
+            if cmd.source and index != 0:
+                raise ShellError("pipe.source_not_first",
+                                 f"`{cmd.name}` produces records, so it must start the pipeline")
+            if not cmd.source and index == 0:
+                raise ShellError("pipe.no_input", f"`{cmd.name}` needs input records",
+                                 f"e.g. ls | {cmd.name} ...")
+            records = cmd.fn(records, args)
+
+        for _ in records:  # drain, in case the pipeline ended without a sink
+            pass
+        return 0
+    except ShellError as err:
+        error = err
+        raise
+    finally:
+        sys.stdout = original_stdout
+        result = capture.captured()
+        if not result and error is not None:
+            result = json.dumps(error.to_record(), ensure_ascii=False)
+        append_history(line, result)
 
 
 # --------------------------------------------------------------------------
@@ -652,7 +729,7 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
 # --------------------------------------------------------------------------
 
 BANNER = (f"Open Shell {__version__}  -  JSON pipelines. "
-          "Try `help`, or `exit` to leave.")
+          "Try `help`, or `exit` or `q` to leave.")
 
 
 def repl() -> int:
@@ -664,7 +741,9 @@ def repl() -> int:
     sys.stdout.write(BANNER + "\n")
     while True:
         try:
-            line = input("oshell> ").strip()
+            # show current directory
+            line = input(f"{os.getcwd()} oshell> ").strip()
+            # line = input("oshell> ").strip()
         except EOFError:
             sys.stdout.write("\n")
             return 0
@@ -674,7 +753,7 @@ def repl() -> int:
 
         if not line or line.startswith("#"):
             continue
-        if line in ("exit", "quit"):
+        if line in ("exit", "quit", "q"):
             return 0
 
         try:

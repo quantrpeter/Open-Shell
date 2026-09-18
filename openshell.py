@@ -101,7 +101,8 @@ class Command:
     fn: Callable[[Records, list[str]], Any]
     summary: str
     usage: str
-    source: bool = False  # produces records; must start a pipeline
+    source: bool = False  # can start a pipeline (produces records)
+    filter: bool = False  # can also sit after another command
     origin: str = field(default="builtin")  # which file provided it
     help_fn: HelpFn | None = None  # optional `cmd --help` printer
 
@@ -149,14 +150,15 @@ def show_command_help(cmd: Command) -> None:
     sys.stdout.write(text if text.endswith("\n") else text + "\n")
 
 
-def command(name: str, summary: str, usage: str, *, source: bool = False):
+def command(name: str, summary: str, usage: str, *,
+            source: bool = False, filter: bool = False):
     """Register a command. Names may contain dots and dashes: `ls`, `sort-by`.
 
     Decorate with `@fn.help` to custom-print `NAME --help`.
     If not set, `--help` prints usage and every option in that string.
     """
     def register(fn):
-        COMMANDS[name] = Command(name, fn, summary, usage, source)
+        COMMANDS[name] = Command(name, fn, summary, usage, source, filter)
 
         def help_decorator(custom: HelpFn) -> HelpFn:
             for registered in COMMANDS.values():
@@ -702,7 +704,7 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
 
         records: Records = iter(())
         for index, (cmd, args) in enumerate(resolved):
-            if cmd.source and index != 0:
+            if cmd.source and index != 0 and not cmd.filter:
                 raise ShellError("pipe.source_not_first",
                                  f"`{cmd.name}` produces records, so it must start the pipeline")
             if not cmd.source and index == 0:

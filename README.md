@@ -100,7 +100,7 @@ Errors are records, never raw tracebacks:
 | `less` | `less [-n N] FILE` | First N lines (default 20) |
 | `head` | `head [-n N] FILE` | First N lines (default 10) |
 | `tail` | `tail [-n N] FILE` | Last N lines (default 10) |
-| `grep` | `grep [-i] PATTERN FILE …` | Search files for a pattern |
+| `grep` | `grep [-i] PATTERN [FILE …]` | Search files, or filter pipeline records |
 | `find` | `find [PATH] [-name GLOB] [-type f\|d] [-size SIZE] [-mtime DAYS]` | Search for files |
 | `ps` | `ps [aux]` | List running processes |
 | `top` / `htop` | `top [-n N]` | List processes by CPU usage |

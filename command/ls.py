@@ -27,16 +27,22 @@ def ls(_input: Records, args: list[str]) -> Records:
                              "check the path, or run `ls` with no arguments")
         if target.is_file():
             record = file_record(target)
+            record = filterObject(record)
             if record is not None:
                 yield record
             continue
         entries = target.rglob("*") if recursive else target.iterdir()
-        for path in entries:
+        for path in sorted(entries, key=lambda p: p.name.lower()):
             if not show_hidden and path.name.startswith("."):
                 continue
             record = file_record(path)
+            record = filterObject(record)
             if record is not None:
                 yield record
+
+def filterObject(obj):
+    del obj["fullpath"]
+    return obj
 
 
 @ls.help

@@ -450,7 +450,7 @@ def file_record(path: Path) -> dict[str, Any] | None:
         return None
     return {
         "name": path.name,
-        "path": str(path),
+        "fullpath": str(path.resolve()),
         "is_dir": path.is_dir(),
         "size": stat.st_size,
         "modified": format_datetime(stat.st_mtime),

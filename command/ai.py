@@ -92,6 +92,58 @@ def _sample_records(incoming: list[Json]) -> list[Json]:
     return [_redact(record) for record in incoming[:SAMPLE_LIMIT]]
 
 
+def _plain_error_text(text: str) -> str:
+    lowered = text.lower()
+    if "<html" in lowered or "<!doctype" in lowered:
+        if "cloudflare" in lowered or "attention required" in lowered:
+            return "Cloudflare challenge page (upstream provider blocked the request)"
+        return "HTML error page from upstream provider"
+    return text
+
+
+def _http_error_detail(err: urllib.error.HTTPError) -> str:
+    try:
+        raw = err.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    text = raw.strip()
+    if not text:
+        return ""
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    parts: list[str] = []
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        meta: dict[str, Json] = {}
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("code")
+            if message:
+                parts.append(str(message))
+            nested = error.get("metadata")
+            if isinstance(nested, dict):
+                meta = nested
+        elif isinstance(error, str):
+            parts.append(error)
+        elif payload.get("message"):
+            parts.append(str(payload["message"]))
+        provider_name = meta.get("provider_name")
+        nested_raw = meta.get("raw")
+        if provider_name:
+            parts.append(f"provider={provider_name}")
+        if nested_raw:
+            parts.append(_plain_error_text(str(nested_raw)))
+        if not parts:
+            parts.append(text)
+        text = ": ".join(parts)
+    else:
+        text = _plain_error_text(text)
+    text = str(_redact(text))
+    text = " ".join(text.split())
+    return text[:400]
+
+
 def _command_catalog() -> str:
     lines: list[str] = []
     for name in sorted(COMMANDS):
@@ -160,8 +212,7 @@ def complete_chat(task: str, incoming: list[Json], *, as_pipeline: bool) -> str:
         "Content-Type": "application/json",
         "User-Agent": "openshell",
     }
-    print(json.dumps(_redact(body), ensure_ascii=False, indent=2))
-    print(provider)
+    # print(json.dumps(_redact(body), ensure_ascii=False, indent=2))
     if provider == "openrouter":
         headers["HTTP-Referer"] = "https://openshell.dev"
         headers["X-Title"] = "Open Shell"
@@ -175,8 +226,11 @@ def complete_chat(task: str, incoming: list[Json], *, as_pipeline: bool) -> str:
         with urllib.request.urlopen(request, timeout=120, context=ssl_context()) as response:
             raw = response.read()
     except urllib.error.HTTPError as err:
-        err.read()  # drain, do not surface body (may echo the request)
-        raise ShellError("ai.http", f"AI request failed ({err.code})",
+        detail = _http_error_detail(err)
+        message = f"AI request failed ({err.code})"
+        if detail:
+            message = f"{message}: {detail}"
+        raise ShellError("ai.http", message,
                          "check ai, ai_key, and ai_mode in ~/.openshell") from err
     except urllib.error.URLError as err:
         raise ShellError("ai.http", f"could not reach AI provider: {err.reason}",

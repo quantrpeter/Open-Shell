@@ -32,7 +32,7 @@ python3 -m venv .venv
 ```
 
 `pip` ships the **core + basic commands**. Extra and advanced commands are not
-on PyPI — they live on the website registry.
+on PyPI — they live on the website registry, or in GitHub command packages.
 
 ## Quick start
 
@@ -172,8 +172,6 @@ openshell -c 'search'
 openshell -c 'install count'
 openshell -c 'ls | count'
 openshell -c 'remove count'
-openshell -c 'install https://github.com/quantrpeter/Open-Shell-Mysql'
-openshell -c 'mysql:connect'
 ```
 
 Until the site is live, use the copy in this repo:
@@ -192,11 +190,38 @@ Current extras in `registry/`:
 | `uniq` | `uniq [.FIELD]` | Drop consecutive duplicates |
 
 `install NAME` writes `~/.config/oshell/command/<file>.py` and checks the
-`sha256` in `registry/index.json`. `install https://github.com/owner/repo`
-copies `command/*.py` from that repo into `~/.config/oshell/package/<name>/`.
-A repo named `Open-Shell-Mysql` installs as package `mysql`, and its commands
-use the `package:command` convention (`mysql:connect`). Built-ins cannot be
-removed.
+`sha256` in `registry/index.json`. Built-ins cannot be removed.
+
+## GitHub command packages
+
+Install a whole command package from a GitHub repo (or a local folder):
+
+```bash
+openshell -c 'install https://github.com/quantrpeter/Open-Shell-Mysql'
+openshell -c 'mysql:connect'
+```
+
+`Open-Shell-Mysql` installs as package `mysql`. Commands use the
+`package:command` convention (`mysql:connect`). Files are copied from the
+repo's `command/` folder into `~/.config/oshell/package/mysql/`.
+
+`install` yields one record:
+
+| Field | Meaning |
+|---|---|
+| `name` | Package name (`Open-Shell-Mysql` → `mysql`) |
+| `path` | Local install folder (`~/.config/oshell/package/mysql`) |
+| `files` | Command files that were copied |
+| `source` | GitHub URL or local folder |
+| `status` | `installed` |
+| `kind` | `package` |
+| `branch` | Git branch (`main` for GitHub installs) |
+
+A local checkout works the same way:
+
+```bash
+openshell -c 'install /path/to/Open-Shell-Mysql'
+```
 
 ## Writing a command
 
@@ -212,7 +237,8 @@ def greet(_input: Records, args: list[str]) -> Records:
     yield {"hello": args[0] if args else "world"}
 
 @greet.help
-def greet_help():
+def ~/.config/oshell/package/*/*.py` — GitHub / local packages
+4. `greet_help():
     print("greet [NAME]")
     print("  Say hello as a JSON record. NAME defaults to world.")
 ```
@@ -249,8 +275,9 @@ flowchart TD
 
     subgraph search [Search path]
         Builtin["1. command/ or oshell_command/"]
-        UserDir["2. ~/.config/oshell/command/"]
-        Extra["3. OSHELL_COMMAND_PATH"]
+        Packages["3. ~/.config/oshell/package/*/"]
+        Extra["4. OSHELL_COMMAND_PATH"]
+        Builtin --> UserDir --> PackagesMMAND_PATH"]
         Builtin --> UserDir --> Extra
     end
 
@@ -313,7 +340,14 @@ command/                  basic commands (shipped on PyPI)
 registry/                 website extras (not in the wheel)
   index.json              catalog + sha256
   commands/*.py           one extra command per file
-skills/                   design plan and build steps
+ski
+
+Installed GitHub packages live outside this repo:
+
+```text
+~/.config/oshell/command/             website extras (`install count`)
+~/.config/oshell/package/<name>/      GitHub / local packages
+```lls/                   design plan and build steps
 image/                    banner
 ```
 

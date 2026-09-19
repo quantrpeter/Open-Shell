@@ -4,7 +4,7 @@ Open Shell (`openshell`) - the AI-era shell for everyone.
 
 A shell whose pipeline carries JSON records instead of text:
 
-    oshell> ls -r . | where .size > 10kb | sort-by .size --desc | take 5
+    oshell> ls -r . | where .size > 10kb | sort .size --desc | take 5
 
 This file is the core: the record model, the command registry, the pipeline
 runner, the loader, and the frontends. The commands themselves live one per
@@ -23,6 +23,7 @@ import json
 import os
 import re
 import shlex
+import ssl
 import sys
 import urllib.error
 import urllib.parse
@@ -36,17 +37,20 @@ __version__ = "0.0.2"
 
 # The surface a command file may rely on: `from openshell import ...`
 __all__ = [
-    "COMMANDS", "Json", "Records", "ShellError", "__version__", "command",
-    "command_options", "expand_path", "fetch_catalog", "fetch_registry_file",
-    "file_record", "format_datetime", "get_field", "human_size",
-    "history_path", "install_from_catalog", "iter_file_lines", "iter_processes",
-    "literal", "parse_args", "print_default_help", "registry_root",
-    "reload_commands", "remove_user_command", "show_command_help", "sort_key",
+    "COMMANDS", "Json", "Records", "SETTINGS", "ShellError", "__version__",
+    "command", "command_options", "expand_path", "fetch_catalog",
+    "fetch_registry_file", "file_record", "format_datetime", "get_field",
+    "human_size", "history_path", "install_from_catalog", "iter_file_lines",
+    "iter_processes", "literal", "load_settings", "parse_args",
+    "parse_pipeline", "print_default_help", "registry_root",
+    "reload_commands", "remove_user_command", "run_pipeline_records",
+    "settings_path", "show_command_help", "sort_key", "ssl_context",
     "use_color", "user_command_dir",
 ]
 
 Json = Any
 Records = Iterator[Json]
+SETTINGS: dict[str, Json] = {}
 
 
 # --------------------------------------------------------------------------
@@ -181,6 +185,33 @@ DEFAULT_REGISTRY_URL = "https://openshell.dev/registry"
 SAFE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.py$")
 
 
+def settings_path() -> Path:
+    """Where Open Shell user settings are stored."""
+    return Path.home() / ".openshell"
+
+
+def load_settings() -> ShellError | None:
+    """Read `~/.openshell` into SETTINGS. Missing settings are not an error."""
+    SETTINGS.clear()
+    path = settings_path()
+    if not path.exists():
+        return None
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError as err:
+        return ShellError("settings.bad_json", f"{path}: invalid JSON: {err}",
+                          "fix ~/.openshell")
+    except OSError as err:
+        return ShellError("settings.read_failed", f"cannot read {path}: {err}",
+                          "check ~/.openshell permissions")
+    if not isinstance(data, dict):
+        return ShellError("settings.bad_type", f"{path}: expected a JSON object",
+                          'use JSON like {"ai":"xai","ai_key":"..."}')
+    SETTINGS.update(data)
+    return None
+
+
 def user_command_dir() -> Path:
     """Installed extras live here, not in the pip package."""
     return Path.home() / ".config" / "oshell" / "command"
@@ -271,6 +302,33 @@ def join_registry(path: str) -> str:
     return f"{root}/{rel}"
 
 
+def ssl_context() -> ssl.SSLContext:
+    """TLS context with a CA bundle. python.org builds often ship without one."""
+    candidates: list[str] = []
+    try:
+        import certifi
+        candidates.append(certifi.where())
+    except ImportError:
+        pass
+    paths = ssl.get_default_verify_paths()
+    candidates.extend([
+        "/etc/ssl/cert.pem",
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/opt/homebrew/etc/openssl@3/cert.pem",
+        "/usr/local/etc/openssl@3/cert.pem",
+        paths.cafile or "",
+        paths.openssl_cafile or "",
+    ])
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if Path(candidate).is_file():
+            return ssl.create_default_context(cafile=candidate)
+    return ssl.create_default_context()
+
+
 def fetch_bytes(url: str) -> bytes:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme == "file":
@@ -285,7 +343,7 @@ def fetch_bytes(url: str) -> bytes:
     request = urllib.request.Request(
         url, headers={"User-Agent": f"openshell/{__version__}"})
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=20, context=ssl_context()) as response:
             return response.read()
     except urllib.error.HTTPError as err:
         raise ShellError("registry.fetch_failed",
@@ -404,10 +462,13 @@ def load_commands() -> list[ShellError]:
 
 
 def reload_commands() -> tuple[list[str], list[ShellError]]:
-    """Drop every registered command and load command files from disk again."""
+    """Reload settings and every registered command file from disk."""
     importlib.invalidate_caches()
     COMMANDS.clear()
+    settings_problem = load_settings()
     problems = load_commands()
+    if settings_problem is not None:
+        problems.insert(0, settings_problem)
     return sorted(COMMANDS), problems
 
 
@@ -668,7 +729,8 @@ def split_stages(line: str) -> list[str]:
     return [stage.strip() for stage in stages]
 
 
-def run_pipeline(line: str, *, force_json: bool = False) -> int:
+def parse_pipeline(line: str) -> list[tuple[str, list[str]]]:
+    """Split a pipeline into `(command, args)` stages."""
     parsed: list[tuple[str, list[str]]] = []
     for stage in split_stages(line):
         if not stage:
@@ -676,7 +738,50 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
         tokens = shlex.split(stage, comments=True)
         if tokens:
             parsed.append((tokens[0], tokens[1:]))
+    return parsed
 
+
+def iter_pipeline(
+    parsed: list[tuple[str, list[str]]],
+    records: Records | None = None,
+) -> Records:
+    """Run parsed stages and yield records. No auto-sink, no history."""
+    if not parsed:
+        return iter(())
+    has_input = records is not None
+    stream: Records = iter(()) if records is None else records
+    resolved: list[tuple[Command, list[str]]] = []
+    for name, args in parsed:
+        cmd = COMMANDS.get(name)
+        if cmd is None:
+            raise ShellError("cmd.not_found", f"command not found: {name}",
+                             "run `help` for built-ins, or `search` / `install NAME` for extras")
+        resolved.append((cmd, args))
+    for index, (cmd, args) in enumerate(resolved):
+        if cmd.source and index != 0 and not cmd.filter:
+            raise ShellError("pipe.source_not_first",
+                             f"`{cmd.name}` produces records, so it must start the pipeline")
+        if not cmd.source and index == 0 and not has_input:
+            raise ShellError("pipe.no_input", f"`{cmd.name}` needs input records",
+                             f"e.g. ls | {cmd.name} ...")
+        stream = cmd.fn(stream, args)
+    return stream
+
+
+def run_pipeline_records(line: str, records: Records | None = None) -> list[Json]:
+    """Run a pipeline and return its records (used by `ai`)."""
+    parsed = parse_pipeline(line)
+    while parsed and parsed[-1][0] == "to":
+        parsed.pop()
+    for name, _args in parsed:
+        if name == "ai":
+            raise ShellError("ai.recursive", "generated pipeline must not call `ai`",
+                             "ask for ls / where / sort / take instead")
+    return list(iter_pipeline(parsed, records))
+
+
+def run_pipeline(line: str, *, force_json: bool = False) -> int:
+    parsed = parse_pipeline(line)
     if not parsed:
         return 0
 
@@ -691,7 +796,6 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
             default = "json" if force_json or not sys.stdout.isatty() else "table"
             parsed.append(("to", [default]))
 
-        resolved: list[tuple[Command, list[str]]] = []
         for name, args in parsed:
             cmd = COMMANDS.get(name)
             if cmd is None:
@@ -700,19 +804,8 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
             if "--help" in args:
                 show_command_help(cmd)
                 return 0
-            resolved.append((cmd, args))
 
-        records: Records = iter(())
-        for index, (cmd, args) in enumerate(resolved):
-            if cmd.source and index != 0 and not cmd.filter:
-                raise ShellError("pipe.source_not_first",
-                                 f"`{cmd.name}` produces records, so it must start the pipeline")
-            if not cmd.source and index == 0:
-                raise ShellError("pipe.no_input", f"`{cmd.name}` needs input records",
-                                 f"e.g. ls | {cmd.name} ...")
-            records = cmd.fn(records, args)
-
-        for _ in records:  # drain, in case the pipeline ended without a sink
+        for _ in iter_pipeline(parsed):  # drain, in case the pipeline ended without a sink
             pass
         return 0
     except ShellError as err:
@@ -832,7 +925,7 @@ Registry: $OSHELL_REGISTRY_URL  (default https://openshell.dev/registry)
 
 Examples:
   openshell -c 'ls'
-  openshell -c 'ls -r . | where .size > 10kb | sort-by .size --desc | take 5'
+  openshell -c 'ls -r . | where .size > 10kb | sort .size --desc | take 5'
   openshell -c 'help | select .name .origin'
 """
 
@@ -863,6 +956,9 @@ def main(argv: list[str] | None = None) -> int:
                                    "run `openshell --help`"))
             return 2
 
+    settings_problem = load_settings()
+    if settings_problem is not None:
+        print_error(settings_problem)
     for problem in load_commands():
         print_error(problem)
     if not COMMANDS:

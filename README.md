@@ -9,7 +9,7 @@ so every stage is structured, and the same pipeline works on Linux, macOS, and
 Windows.
 
 ```text
-oshell> ls -r . | where .size > 10kb | sort-by .size --desc | take 5
+oshell> ls -r . | where .size > 10kb | sort .size --desc | take 5
 ```
 
 Status: **0.0.1** (pre-alpha). Python 3.12+, standard library only.
@@ -42,7 +42,7 @@ openshell
 
 # One pipeline, then exit
 openshell -c 'ls'
-openshell -c 'ls -r . | where .size > 10kb | sort-by .size --desc | take 5'
+openshell -c 'ls -r . | where .size > 10kb | sort .size --desc | take 5'
 openshell -c 'help | select .name .summary'
 
 # Force NDJSON (also the default when stdout is not a TTY)
@@ -64,7 +64,7 @@ Each command **yields records**. Only sinks (`to json`, `to table`) print.
 ```text
 ls -r .          →  {name, path, is_dir, size, modified} …
      | where .size > 10kb
-     | sort-by .size --desc
+     | sort .size --desc
      | take 5
      | select .name .size
      | to table
@@ -109,12 +109,14 @@ Errors are records, never raw tracebacks:
 | `du` | `du [-s] [-h] [PATH …]` | Directory disk usage |
 | `where` | `where .FIELD [OP VALUE]` | Filter (`>`, `<`, `==`, `!=`, `>=`, `<=`, `=~`) |
 | `select` | `select .FIELD …` | Keep named fields |
-| `sort-by` | `sort-by .FIELD [--desc]` | Sort (buffers the stream) |
+| `sort` | `sort .FIELD [--desc]` | Sort (buffers the stream) |
 | `take` | `take N` | First N records |
 | `substring` | `substring .FIELD START [END]` | Slice a string field (Python indexes) |
 | `to` | `to json\|table [--compact]` | Render the stream |
 | `help` | `help [NAME]` | List loaded commands as records |
 | `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`) |
+| `env` | `env` | Dump settings loaded from `~/.openshell` |
+| `ai` | `ai PROMPT …` | Ask the configured model to write and run a pipeline |
 | `command` | `command` | Same idea: every command as a record |
 | `reload` | `reload` | Re-read every command `*.py` from disk |
 | `version` | `version` | Version and runtime |
@@ -126,6 +128,21 @@ Errors are records, never raw tracebacks:
 
 ```bash
 openshell -c 'help | select .name .usage .origin'
+```
+
+`ai` reads `~/.openshell`:
+
+```json
+{
+  "ai": "xai",
+  "ai_key": "...",
+  "ai_mode": "grok-4.6"
+}
+```
+
+```bash
+openshell -c 'ai largest 3 files'
+openshell -c 'ls | ai largest 3 files'
 ```
 
 ## Website extras (not on PyPI)
@@ -163,7 +180,7 @@ in `registry/index.json`. Built-ins cannot be removed.
 
 One file per command. Drop it in `command/` (basic, ships with pip) or
 `registry/commands/` (website extra). The **decorator** is the name, not the
-filename: `sort_by.py` registers `sort-by`.
+filename: `sort.py` registers `sort`.
 
 ```python
 from openshell import Records, command

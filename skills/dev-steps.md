@@ -32,7 +32,7 @@ well under a second (proving laziness); `openshell --version` works from the ven
 Commands live in `command/`, one file each, discovered by path at startup — so
 adding a command means adding a file, with nothing to register.
 
-- `command/{ls,where,select,sort_by,take,to,help,version}.py`
+- `command/{ls,where,select,sort,take,to,help,version}.py`
 - Load order: `command/` (or `oshell_command/` when installed) →
   `~/.config/oshell/command/` → `$OSHELL_COMMAND_PATH`. Later wins on conflict.
 - A command file that raises is **reported and skipped**, never fatal.

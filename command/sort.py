@@ -18,7 +18,7 @@ def sort(records: Records, args: list[str]) -> Records:
             raise ShellError("arg.unknown", f"sort: unexpected {arg!r}",
                              "e.g. sort .size --desc")
     if field is None:
-        raise ShellError("sort.no_field", "fuck sort needs a field",
+        raise ShellError("sort.no_field", "sort needs a field",
                          "e.g. sort .size --desc")
 
     yield from sorted(records, key=lambda r: sort_key(get_field(r, field)),

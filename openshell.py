@@ -331,6 +331,37 @@ def _readline_last_index() -> int | None:
 	return length if length >= 1 else None
 
 
+def load_readline_history() -> None:
+	"""Seed up-arrow from `~/.openshell_history` so it matches `history`."""
+	try:
+		import readline
+	except ImportError:
+		return
+	path = history_path()
+	if not path.is_file():
+		return
+	try:
+		lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+	except OSError:
+		return
+	try:
+		readline.clear_history()
+	except Exception:
+		pass
+	previous = None
+	for text in lines:
+		command = _history_command_text(text).strip()
+		if not command or HISTORY_EVENT_RE.match(command):
+			continue
+		if command == previous:
+			continue
+		try:
+			readline.add_history(command)
+		except Exception:
+			return
+		previous = command
+
+
 def replace_readline_history(typed: str, expanded: str) -> None:
 	"""After `!103`, put the expanded command in up-arrow history, not `!103`."""
 	typed = typed.strip()
@@ -1242,6 +1273,8 @@ def repl() -> int:
 		import readline  # noqa: F401  - arrow keys and history where available
 	except ImportError:
 		pass
+	else:
+		load_readline_history()
 
 	try:
 		os.environ.setdefault("PWD", os.getcwd())

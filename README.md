@@ -119,7 +119,7 @@ Errors are records, never raw tracebacks:
 | `substring` | `substring .FIELD START [END]` | Slice a string field (Python indexes) |
 | `to` | `to json\|table [--compact]` | Render the stream |
 | `help` | `help [NAME]` | List loaded commands as records |
-| `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`). `!61` reruns event 61 |
+| `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`). `!61` reruns event 61. Up-arrow loads the same file |
 | `env` | `env` | Dump settings loaded from `~/.openshell` |
 | `create` | `create .openshell [--force]` | Write a sample `~/.openshell` |
 | `ai` | `ai PROMPT …` | First command: write and run a pipeline. Later stage: JSON answer |

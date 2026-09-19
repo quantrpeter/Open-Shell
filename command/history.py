@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from openshell import Records, ShellError, command, history_path
 
@@ -50,9 +51,15 @@ def history(_input: Records, args: list[str]) -> Records:
 
 	for number, text in enumerate(lines, start):
 		record = _parse_history_line(text)
+  
+		# replace (xx records) to ""
+		import re
+		result = re.sub(r"\(\d+ records\)", "", record["result"])
+		result = result.replace("\n", "")
+  
 		yield {
 			"n": number,
 			"timestamp": record["timestamp"],
 			"command": record["command"],
-			"result": record["result"],
+			"result": result,
 		}

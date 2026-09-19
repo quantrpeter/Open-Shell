@@ -123,8 +123,8 @@ Errors are records, never raw tracebacks:
 | `reload` | `reload` | Re-read every command `*.py` from disk |
 | `version` | `version` | Version and runtime |
 | `search` | `search [QUERY]` | List extras on the website registry |
-| `install` | `install NAME` | Download an extra into `~/.config/oshell/command/` |
-| `remove` | `remove NAME` | Remove a website extra (not a built-in) |
+| `install` | `install NAME\|URL` | Website extra, or a GitHub command package |
+| `remove` | `remove NAME` | Remove a website extra or package command |
 
 `help` itself is a source command, so this works:
 
@@ -172,6 +172,8 @@ openshell -c 'search'
 openshell -c 'install count'
 openshell -c 'ls | count'
 openshell -c 'remove count'
+openshell -c 'install https://github.com/quantrpeter/Open-Shell-Mysql'
+openshell -c 'mysql:connect'
 ```
 
 Until the site is live, use the copy in this repo:
@@ -189,8 +191,12 @@ Current extras in `registry/`:
 | `count` | `count` | Count incoming records |
 | `uniq` | `uniq [.FIELD]` | Drop consecutive duplicates |
 
-`install` writes `~/.config/oshell/command/<file>.py` and checks the `sha256`
-in `registry/index.json`. Built-ins cannot be removed.
+`install NAME` writes `~/.config/oshell/command/<file>.py` and checks the
+`sha256` in `registry/index.json`. `install https://github.com/owner/repo`
+copies `command/*.py` from that repo into `~/.config/oshell/package/<name>/`.
+A repo named `Open-Shell-Mysql` installs as package `mysql`, and its commands
+use the `package:command` convention (`mysql:connect`). Built-ins cannot be
+removed.
 
 ## Writing a command
 

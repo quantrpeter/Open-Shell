@@ -23,11 +23,14 @@ import json
 import os
 import re
 import shlex
+import shutil
 import ssl
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -40,12 +43,13 @@ __all__ = [
 	"COMMANDS", "Json", "Records", "SETTINGS", "ShellError", "__version__",
 	"command", "command_options", "expand_path", "fetch_catalog",
 	"fetch_registry_file", "file_record", "format_datetime", "get_field",
-	"human_size", "history_path", "install_from_catalog", "iter_file_lines",
-	"iter_processes", "literal", "load_settings", "parse_args",
-	"parse_pipeline", "pipeline_index", "print_default_help",
+	"human_size", "history_path", "install_from_catalog", "install_source",
+	"iter_file_lines", "iter_processes", "literal", "load_settings",
+	"parse_args", "parse_pipeline", "pipeline_index", "print_default_help",
 	"registry_root", "reload_commands", "remove_user_command",
 	"run_pipeline_records", "settings_path", "show_command_help",
 	"sort_key", "ssl_context", "use_color", "user_command_dir",
+	"user_package_dir",
 ]
 
 Json = Any
@@ -183,6 +187,11 @@ COMMAND_PATH_ENV = "OSHELL_COMMAND_PATH"
 REGISTRY_URL_ENV = "OSHELL_REGISTRY_URL"
 DEFAULT_REGISTRY_URL = "https://openshell.dev/registry"
 SAFE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.py$")
+SAFE_PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+GITHUB_REPO_RE = re.compile(
+	r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)"
+	r"(?:\.git)?(?:/tree/(?P<branch>[^/]+))?/?$"
+)
 
 
 def settings_path() -> Path:
@@ -215,6 +224,11 @@ def load_settings() -> ShellError | None:
 def user_command_dir() -> Path:
 	"""Installed extras live here, not in the pip package."""
 	return Path.home() / ".config" / "oshell" / "command"
+
+
+def user_package_dir() -> Path:
+	"""GitHub / local command packages live here as one folder per package."""
+	return Path.home() / ".config" / "oshell" / "package"
 
 
 HISTORY_RESULT_MAX = 10_000
@@ -287,6 +301,9 @@ def command_dirs() -> list[Path]:
 		here / "oshell_command",	# installed wheel (see pyproject package-dir)
 		user_command_dir(),		 # extras downloaded from the website
 	]
+	packages = user_package_dir()
+	if packages.is_dir():
+		dirs += sorted(path for path in packages.iterdir() if path.is_dir())
 	extra = os.environ.get(COMMAND_PATH_ENV, "")
 	dirs += [Path(p).expanduser() for p in extra.split(os.pathsep) if p]
 	return dirs
@@ -378,6 +395,129 @@ def catalog_entry(name: str) -> dict[str, Any]:
 					 "run `search` to list website commands")
 
 
+def looks_like_install_url(source: str) -> bool:
+	return source.startswith(("https://", "http://", "file://", "git@"))
+
+
+def package_name_from_repo(repo: str) -> str:
+	name = repo.removesuffix(".git")
+	if name.lower().startswith("open-shell-"):
+		name = name[len("open-shell-"):]
+	name = name.lower().replace("_", "-")
+	if not SAFE_PACKAGE_RE.match(name):
+		raise ShellError("install.bad_package", f"unsafe package name: {name!r}",
+						 "repo names must be letters, digits, dots, dashes, or underscores")
+	return name
+
+
+def github_repo_parts(url: str) -> tuple[str, str, str] | None:
+	match = GITHUB_REPO_RE.match(url.rstrip("/"))
+	if match is None:
+		return None
+	return match.group("owner"), match.group("repo"), match.group("branch") or "main"
+
+
+def command_root_from(root: Path) -> Path:
+	"""Prefer `command/` inside a package repo; otherwise the repo itself."""
+	nested = root / "command"
+	if nested.is_dir():
+		return nested
+	return root
+
+
+def copy_command_files(source: Path, dest: Path) -> list[str]:
+	files = sorted(
+		path for path in source.glob("*.py")
+		if not path.name.startswith("_") and SAFE_FILE_RE.match(path.name)
+	)
+	if not files:
+		raise ShellError("install.no_commands", f"no command files in {source}",
+						 "put *.py files in command/ (or the repo root)")
+	dest.mkdir(parents=True, exist_ok=True)
+	copied: list[str] = []
+	for path in files:
+		shutil.copy2(path, dest / path.name)
+		copied.append(path.name)
+	return copied
+
+
+def install_from_local_dir(source: Path, package: str | None = None) -> dict[str, Any]:
+	root = source.expanduser().resolve()
+	if not root.is_dir():
+		raise ShellError("install.not_found", f"no such directory: {root}",
+						 "pass a GitHub URL or a local package folder")
+	name = package or package_name_from_repo(root.name)
+	dest = user_package_dir() / name
+	if dest.exists():
+		shutil.rmtree(dest)
+	copied = copy_command_files(command_root_from(root), dest)
+	return {
+		"name": name,
+		"path": str(dest),
+		"files": copied,
+		"source": str(root),
+		"status": "installed",
+		"kind": "package",
+	}
+
+
+def _zip_root(extract_dir: Path) -> Path:
+	children = [path for path in extract_dir.iterdir() if path.name != "__MACOSX"]
+	if len(children) == 1 and children[0].is_dir():
+		return children[0]
+	return extract_dir
+
+
+def install_from_github(url: str) -> dict[str, Any]:
+	parts = github_repo_parts(url)
+	if parts is None:
+		raise ShellError("install.bad_url", f"not a GitHub repository URL: {url}",
+						 "e.g. install https://github.com/quantrpeter/Open-Shell-Mysql")
+	owner, repo, branch = parts
+	package = package_name_from_repo(repo)
+	zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+	try:
+		data = fetch_bytes(zip_url)
+	except ShellError as err:
+		if branch == "main" and "404" in err.message:
+			zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/master.zip"
+			data = fetch_bytes(zip_url)
+			branch = "master"
+		else:
+			raise
+	scratch = Path(tempfile.mkdtemp(prefix="oshell-install-"))
+	try:
+		archive = scratch / "repo.zip"
+		archive.write_bytes(data)
+		extract_dir = scratch / "src"
+		extract_dir.mkdir()
+		try:
+			with zipfile.ZipFile(archive) as zf:
+				zf.extractall(extract_dir)
+		except zipfile.BadZipFile as err:
+			raise ShellError("install.bad_zip", f"GitHub did not return a zip: {url}",
+							 "check the repository URL") from err
+		record = install_from_local_dir(_zip_root(extract_dir), package)
+		record["source"] = f"https://github.com/{owner}/{repo}"
+		record["branch"] = branch
+		return record
+	finally:
+		shutil.rmtree(scratch, ignore_errors=True)
+
+
+def install_source(source: str) -> dict[str, Any]:
+	"""Install a website extra by name, or a GitHub / local command package."""
+	if looks_like_install_url(source) or GITHUB_REPO_RE.match(source):
+		if github_repo_parts(source) is not None:
+			return install_from_github(source)
+		raise ShellError("install.bad_url", f"not a GitHub repository URL: {source}",
+						 "e.g. install https://github.com/quantrpeter/Open-Shell-Mysql")
+	path = Path(source).expanduser()
+	if path.is_dir() or source.startswith((".", "/", "~")):
+		return install_from_local_dir(path)
+	return install_from_catalog(source)
+
+
 def install_from_catalog(name: str) -> dict[str, Any]:
 	entry = catalog_entry(name)
 	relpath = str(entry.get("file") or "")
@@ -412,18 +552,29 @@ def remove_user_command(name: str) -> dict[str, Any]:
 	if loaded is None:
 		raise ShellError("cmd.not_found", f"command not found: {name}",
 						 "only website-installed commands can be removed")
-	path = user_command_dir() / loaded.origin
-	if not path.is_file():
+	candidates = [
+		user_package_dir() / loaded.origin,
+		user_command_dir() / loaded.origin,
+		user_command_dir() / Path(loaded.origin).name,
+	]
+	path = next((candidate for candidate in candidates if candidate.is_file()), None)
+	if path is None:
 		raise ShellError("pkg.builtin",
 						 f"`{name}` is a built-in command and cannot be removed",
 						 "pip ships the basic set; only `install` extras are removable")
 	path.unlink()
+	parent = path.parent
+	if parent != user_command_dir() and parent.parent == user_package_dir():
+		if not any(parent.glob("*.py")):
+			shutil.rmtree(parent, ignore_errors=True)
 	return {"name": name, "path": str(path), "status": "removed"}
 
 
 def load_command_file(path: Path) -> list[str]:
 	"""Exec one command file and return the command names it registered."""
-	module_name = f"oshell_command_{path.stem}"
+	parent = re.sub(r"[^A-Za-z0-9_]", "_", path.parent.name)
+	stem = re.sub(r"[^A-Za-z0-9_]", "_", path.stem)
+	module_name = f"oshell_command_{parent}_{stem}"
 	sys.modules.pop(module_name, None)
 	spec = importlib.util.spec_from_file_location(module_name, path)
 	if spec is None or spec.loader is None:
@@ -434,6 +585,15 @@ def load_command_file(path: Path) -> list[str]:
 	sys.modules[module_name] = module
 	spec.loader.exec_module(module)
 	return sorted(set(COMMANDS) - before)
+
+
+def _command_origin(path: Path) -> str:
+	for root in (user_package_dir(), user_command_dir()):
+		try:
+			return str(path.relative_to(root))
+		except ValueError:
+			continue
+	return path.name
 
 
 def load_commands() -> list[ShellError]:
@@ -452,7 +612,7 @@ def load_commands() -> list[ShellError]:
 				continue
 			try:
 				for name in load_command_file(path):
-					COMMANDS[name].origin = path.name
+					COMMANDS[name].origin = _command_origin(path)
 			except Exception as err:
 				problems.append(ShellError(
 					"command.load_failed",
@@ -946,10 +1106,12 @@ Install:
   pip install open-shell-ai # PyPI ships the core + basic commands
   openshell -c 'search'	 # extras live on the website, not PyPI
   openshell -c 'install NAME'
+  openshell -c 'install https://github.com/owner/Open-Shell-Mysql'
 
 Commands are loaded at startup from, in order:
   <install dir>/oshell_command/*.py   (basic set, from pip)
   ~/.config/oshell/command/*.py	   (website extras)
+  ~/.config/oshell/package/*/*.py	 (GitHub / local packages)
   $OSHELL_COMMAND_PATH
 
 Registry: $OSHELL_REGISTRY_URL  (default https://openshell.dev/registry)

@@ -1,14 +1,16 @@
-"""install - download an extra command from the website registry."""
+"""install - download extras from the website registry or a GitHub repo."""
 
 from __future__ import annotations
 
-from openshell import Records, ShellError, command, install_from_catalog
+from openshell import Records, ShellError, command, install_source, reload_commands
 
 
-@command("install", "Install an extra command from the website", "install NAME",
-		 source=True)
+@command("install", "Install extras from the website or a GitHub repo",
+		 "install NAME|URL", source=True)
 def install(_input: Records, args: list[str]) -> Records:
 	if len(args) != 1:
-		raise ShellError("arg.missing", "install needs a command name",
-						 "e.g. install count   (run `search` first)")
-	yield install_from_catalog(args[0])
+		raise ShellError("arg.missing", "install needs a name or GitHub URL",
+						 "e.g. install count, or install https://github.com/owner/Open-Shell-Mysql")
+	record = install_source(args[0])
+	reload_commands()
+	yield record

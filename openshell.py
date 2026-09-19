@@ -43,7 +43,8 @@ __all__ = [
 	"COMMANDS", "Json", "Records", "SETTINGS", "ShellError", "__version__",
 	"command", "command_options", "expand_path", "fetch_catalog",
 	"fetch_registry_file", "file_record", "format_datetime", "get_field",
-	"human_size", "history_path", "install_from_catalog", "install_source",
+	"human_size", "history_event", "history_path", "install_from_catalog",
+	"install_source", "expand_history",
 	"iter_file_lines", "iter_processes", "literal", "load_settings",
 	"parse_args", "parse_pipeline", "pipeline_index", "print_default_help",
 	"registry_root", "reload_commands", "remove_user_command",
@@ -271,6 +272,51 @@ class _StdoutCapture:
 
 	def captured(self) -> str:
 		return "".join(self._chunks)
+
+
+HISTORY_EVENT_RE = re.compile(r"^!(\d+)$")
+
+
+def _history_command_text(text: str) -> str:
+	try:
+		record = json.loads(text)
+	except json.JSONDecodeError:
+		return text
+	if isinstance(record, dict) and record.get("command"):
+		return str(record["command"])
+	return text
+
+
+def history_event(n: int) -> str:
+	"""Return the command string for 1-based history index `n` (`history` numbering)."""
+	path = history_path()
+	if not path.is_file():
+		raise ShellError("history.empty", "no history yet",
+						 "run a command first, then `history`")
+	try:
+		lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+	except OSError as err:
+		raise ShellError("fs.read_failed", f"cannot read {path}: {err}",
+						 "check ~/.openshell_history permissions") from err
+	if n < 1 or n > len(lines):
+		raise ShellError("history.not_found", f"no history event {n}",
+						 "run `history` to list numbered commands")
+	command = _history_command_text(lines[n - 1]).strip()
+	if not command:
+		raise ShellError("history.empty", f"history event {n} has no command",
+						 "run `history` to list numbered commands")
+	if HISTORY_EVENT_RE.match(command):
+		raise ShellError("history.recursive", f"history event {n} is itself {command}",
+						 "pick a real command from `history`")
+	return command
+
+
+def expand_history(line: str) -> str:
+	"""`!61` expands to history event 61. Other lines are unchanged."""
+	match = HISTORY_EVENT_RE.match(line.strip())
+	if match is None:
+		return line
+	return history_event(int(match.group(1)))
 
 
 def append_history(line: str, result: str = "") -> None:
@@ -975,6 +1021,11 @@ def run_pipeline_records(line: str, records: Records | None = None) -> list[Json
 
 
 def run_pipeline(line: str, *, force_json: bool = False) -> int:
+	original = line
+	line = expand_history(line)
+	if line != original and sys.stdout.isatty() and not force_json:
+		sys.stdout.write(line + "\n")
+
 	parsed = parse_pipeline(line)
 	if not parsed:
 		return 0

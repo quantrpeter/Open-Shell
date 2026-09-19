@@ -50,6 +50,9 @@ openshell --json -c 'ls | select .name .size'
 
 # Works inside bash / jq
 openshell -c 'ls | select .name .size' | jq .name
+
+# Rerun a numbered history event (same numbers as `history`)
+openshell -c '!61'
 ```
 
 On a terminal, the last stage renders a table. When piped, it writes one JSON
@@ -115,7 +118,7 @@ Errors are records, never raw tracebacks:
 | `substring` | `substring .FIELD START [END]` | Slice a string field (Python indexes) |
 | `to` | `to json\|table [--compact]` | Render the stream |
 | `help` | `help [NAME]` | List loaded commands as records |
-| `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`) |
+| `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`). `!61` reruns event 61 |
 | `env` | `env` | Dump settings loaded from `~/.openshell` |
 | `create` | `create .openshell [--force]` | Write a sample `~/.openshell` |
 | `ai` | `ai PROMPT …` | First command: write and run a pipeline. Later stage: JSON answer |

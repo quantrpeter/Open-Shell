@@ -53,6 +53,7 @@ openshell -c 'ls | select .name .size' | jq .name
 
 # Rerun a numbered history event (same numbers as `history`)
 openshell -c '!61'
+# In the REPL, `!61` then up-arrow recalls the expanded command, not `!61`
 ```
 
 On a terminal, the last stage renders a table. When piped, it writes one JSON
@@ -223,8 +224,13 @@ repo's `command/` folder into `~/.config/oshell/package/mysql/`.
 A local checkout works the same way:
 
 ```bash
-openshell -c 'install /path/to/Open-Shell-Mysql'
+openshell -c 'install ../Open-Shell-Mysql'
 ```
+
+`install` copies files into `~/.config/oshell/package/<name>/` and records the
+checkout path in `source.json`. `reload` recopies from that checkout, so edits
+in `../Open-Shell-Mysql` show up without installing again. GitHub installs are
+not recopyed on reload.
 
 ## Writing a command
 

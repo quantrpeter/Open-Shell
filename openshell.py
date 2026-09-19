@@ -319,6 +319,68 @@ def expand_history(line: str) -> str:
 	return history_event(int(match.group(1)))
 
 
+def _readline_last_index() -> int | None:
+	try:
+		import readline
+	except ImportError:
+		return None
+	try:
+		length = readline.get_current_history_length()
+	except Exception:
+		return None
+	return length if length >= 1 else None
+
+
+def replace_readline_history(typed: str, expanded: str) -> None:
+	"""After `!103`, put the expanded command in up-arrow history, not `!103`."""
+	typed = typed.strip()
+	expanded = expanded.strip()
+	if not typed or typed == expanded:
+		return
+	try:
+		import readline
+	except ImportError:
+		return
+	length = _readline_last_index()
+	if length is None:
+		return
+	try:
+		last = readline.get_history_item(length) or ""
+	except Exception:
+		return
+	if last.strip() != typed:
+		return
+	try:
+		previous = readline.get_history_item(length - 1) if length >= 2 else None
+	except Exception:
+		previous = None
+	# GNU readline: replace/remove are 0-based. libedit may be 1-based.
+	indexes = (length - 1, length)
+	if previous is not None and previous.strip() == expanded:
+		for index in indexes:
+			try:
+				readline.remove_history_item(index)
+				return
+			except Exception:
+				continue
+		return
+	for index in indexes:
+		try:
+			readline.replace_history_item(index, expanded)
+			check = readline.get_history_item(length) or ""
+			if check.strip() == expanded:
+				return
+		except Exception:
+			continue
+	for index in indexes:
+		try:
+			readline.remove_history_item(index)
+			readline.add_history(expanded)
+			return
+		except Exception:
+			continue
+
+
 def append_history(line: str, result: str = "") -> None:
 	"""Append one JSON history record: timestamp, command, result."""
 	text = line.strip()
@@ -471,6 +533,9 @@ def command_root_from(root: Path) -> Path:
 	return root
 
 
+PACKAGE_META = "source.json"
+
+
 def copy_command_files(source: Path, dest: Path) -> list[str]:
 	files = sorted(
 		path for path in source.glob("*.py")
@@ -482,9 +547,35 @@ def copy_command_files(source: Path, dest: Path) -> list[str]:
 	dest.mkdir(parents=True, exist_ok=True)
 	copied: list[str] = []
 	for path in files:
-		shutil.copy2(path, dest / path.name)
+		target = dest / path.name
+		shutil.copyfile(path, target)
+		os.utime(target, None)
 		copied.append(path.name)
+	wanted = set(copied)
+	for existing in dest.glob("*.py"):
+		if existing.name not in wanted:
+			existing.unlink()
+	cache = dest / "__pycache__"
+	if cache.is_dir():
+		shutil.rmtree(cache, ignore_errors=True)
 	return copied
+
+
+def write_package_meta(dest: Path, source: str, kind: str) -> None:
+	dest.mkdir(parents=True, exist_ok=True)
+	meta = {"source": source, "kind": kind}
+	(dest / PACKAGE_META).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+
+def read_package_meta(dest: Path) -> dict[str, Any] | None:
+	path = dest / PACKAGE_META
+	if not path.is_file():
+		return None
+	try:
+		data = json.loads(path.read_text(encoding="utf-8"))
+	except (OSError, json.JSONDecodeError):
+		return None
+	return data if isinstance(data, dict) else None
 
 
 def install_from_local_dir(source: Path, package: str | None = None) -> dict[str, Any]:
@@ -494,9 +585,8 @@ def install_from_local_dir(source: Path, package: str | None = None) -> dict[str
 						 "pass a GitHub URL or a local package folder")
 	name = package or package_name_from_repo(root.name)
 	dest = user_package_dir() / name
-	if dest.exists():
-		shutil.rmtree(dest)
 	copied = copy_command_files(command_root_from(root), dest)
+	write_package_meta(dest, str(root), "local")
 	return {
 		"name": name,
 		"path": str(dest),
@@ -544,7 +634,9 @@ def install_from_github(url: str) -> dict[str, Any]:
 			raise ShellError("install.bad_zip", f"GitHub did not return a zip: {url}",
 							 "check the repository URL") from err
 		record = install_from_local_dir(_zip_root(extract_dir), package)
-		record["source"] = f"https://github.com/{owner}/{repo}"
+		source = f"https://github.com/{owner}/{repo}"
+		write_package_meta(Path(record["path"]), source, "github")
+		record["source"] = source
 		record["branch"] = branch
 		return record
 	finally:
@@ -670,12 +762,45 @@ def load_commands() -> list[ShellError]:
 	return problems
 
 
+def refresh_local_packages() -> list[ShellError]:
+	"""Recopy command files from local checkouts recorded in source.json."""
+	root = user_package_dir()
+	if not root.is_dir():
+		return []
+	problems: list[ShellError] = []
+	for dest in sorted(path for path in root.iterdir() if path.is_dir()):
+		meta = read_package_meta(dest)
+		if meta is None:
+			continue
+		source = str(meta.get("source") or "")
+		if not source or looks_like_install_url(source):
+			continue
+		path = Path(source)
+		if not path.is_dir():
+			problems.append(ShellError(
+				"install.not_found",
+				f"{dest.name}: local source missing: {path}",
+				"run `install ../Open-Shell-Mysql` again"))
+			continue
+		try:
+			copy_command_files(command_root_from(path), dest)
+		except ShellError as err:
+			problems.append(err)
+		except OSError as err:
+			problems.append(ShellError(
+				"install.copy_failed",
+				f"{dest.name}: cannot recopy from {path}: {err}",
+				"check the package folder permissions"))
+	return problems
+
+
 def reload_commands() -> tuple[list[str], list[ShellError]]:
 	"""Reload settings and every registered command file from disk."""
 	importlib.invalidate_caches()
 	COMMANDS.clear()
 	settings_problem = load_settings()
-	problems = load_commands()
+	problems = refresh_local_packages()
+	problems.extend(load_commands())
 	if settings_problem is not None:
 		problems.insert(0, settings_problem)
 	return sorted(COMMANDS), problems
@@ -1023,8 +1148,10 @@ def run_pipeline_records(line: str, records: Records | None = None) -> list[Json
 def run_pipeline(line: str, *, force_json: bool = False) -> int:
 	original = line
 	line = expand_history(line)
-	if line != original and sys.stdout.isatty() and not force_json:
-		sys.stdout.write(line + "\n")
+	if line != original:
+		replace_readline_history(original, line)
+		if sys.stdout.isatty() and not force_json:
+			sys.stdout.write(line + "\n")
 
 	parsed = parse_pipeline(line)
 	if not parsed:

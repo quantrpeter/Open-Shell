@@ -117,6 +117,7 @@ Errors are records, never raw tracebacks:
 | `help` | `help [NAME]` | List loaded commands as records |
 | `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`) |
 | `env` | `env` | Dump settings loaded from `~/.openshell` |
+| `create` | `create .openshell [--force]` | Write a sample `~/.openshell` |
 | `ai` | `ai PROMPT …` | First command: write and run a pipeline. Later stage: JSON answer |
 | `command` | `command` | Same idea: every command as a record |
 | `reload` | `reload` | Re-read every command `*.py` from disk |
@@ -131,7 +132,11 @@ Errors are records, never raw tracebacks:
 openshell -c 'help | select .name .usage .origin'
 ```
 
-`ai` reads `~/.openshell`:
+`ai` reads `~/.openshell`. Create a sample with:
+
+```bash
+openshell -c 'create .openshell'
+```
 
 ```json
 {

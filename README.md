@@ -107,7 +107,7 @@ Errors are records, never raw tracebacks:
 | `top` / `htop` | `top [-n N]` | List processes by CPU usage |
 | `kill` | `kill [-SIGNAL] PID …` | Terminate a process |
 | `df` | `df [-h] [PATH …]` | Disk space usage |
-| `du` | `du [-s] [-h] [PATH …]` | Directory disk usage |
+| `du` | `du [-s] [-h] [-d N] [PATH …]` | Disk usage; default `-d0` first-level folders, `-s` total |
 | `where` | `where .FIELD [OP VALUE]` | Filter (`>`, `<`, `==`, `!=`, `>=`, `<=`, `=~`) |
 | `select` | `select .FIELD …` | Keep named fields |
 | `sort` | `sort .FIELD [--desc]` | Sort (buffers the stream) |

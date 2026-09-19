@@ -507,6 +507,9 @@ def install_from_github(url: str) -> dict[str, Any]:
 
 def install_source(source: str) -> dict[str, Any]:
 	"""Install a website extra by name, or a GitHub / local command package."""
+	if source.startswith("file://"):
+		parsed = urllib.parse.urlparse(source)
+		return install_from_local_dir(Path(urllib.parse.unquote(parsed.path)))
 	if looks_like_install_url(source) or GITHUB_REPO_RE.match(source):
 		if github_repo_parts(source) is not None:
 			return install_from_github(source)

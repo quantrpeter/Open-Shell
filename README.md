@@ -90,6 +90,7 @@ Errors are records, never raw tracebacks:
 | Command | Usage | What it does |
 |---|---|---|
 | `pwd` | `pwd` | Print the working directory |
+| `echo` | `echo [TEXT …]` | Emit arguments as a record |
 | `ls` | `ls [PATH …] [-r] [-a] [-l]` | List files as records |
 | `cd` | `cd [PATH]` | Change the working directory |
 | `mkdir` | `mkdir [-p] PATH …` | Create directories |
@@ -116,7 +117,7 @@ Errors are records, never raw tracebacks:
 | `help` | `help [NAME]` | List loaded commands as records |
 | `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`) |
 | `env` | `env` | Dump settings loaded from `~/.openshell` |
-| `ai` | `ai PROMPT …` | Ask the configured model to write and run a pipeline |
+| `ai` | `ai PROMPT …` | First command: write and run a pipeline. Later stage: JSON answer |
 | `command` | `command` | Same idea: every command as a record |
 | `reload` | `reload` | Re-read every command `*.py` from disk |
 | `version` | `version` | Version and runtime |
@@ -137,6 +138,16 @@ openshell -c 'help | select .name .usage .origin'
   "ai": "xai",
   "ai_key": "...",
   "ai_mode": "grok-4.6"
+}
+```
+
+OpenRouter:
+
+```json
+{
+  "ai": "openrouter",
+  "ai_key": "...",
+  "ai_mode": "openrouter/auto"
 }
 ```
 

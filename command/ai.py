@@ -1,4 +1,8 @@
-"""ai - ask the configured model to write and run an Open Shell pipeline."""
+"""ai - ask the configured model.
+
+First in a pipeline: the model writes Open Shell commands, then they run.
+Later in a pipeline: the model replies with JSON records.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ from openshell import (
     SETTINGS,
     ShellError,
     command,
+    pipeline_index,
     run_pipeline_records,
     ssl_context,
 )
@@ -23,15 +28,17 @@ PROVIDERS = {
     "xai": "https://api.x.ai/v1/chat/completions",
     "grok": "https://api.x.ai/v1/chat/completions",
     "openai": "https://api.openai.com/v1/chat/completions",
+    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
 }
 
 DEFAULT_MODELS = {
     "xai": "grok-4.6",
     "grok": "grok-4.6",
     "openai": "gpt-4.1",
+    "openrouter": "openrouter/auto",
 }
 
-SAMPLE_LIMIT = 8
+SAMPLE_LIMIT = 100
 SKIP_COMMANDS = {"ai", "to", "json", "reload", "install", "remove"}
 SECRET_NAME_RE = re.compile(r"(key|token|secret|password|passwd|authorization)", re.I)
 
@@ -68,16 +75,6 @@ def _ai_config() -> tuple[str, str, str, str]:
     return provider, url, key, model
 
 
-def _command_catalog() -> str:
-    lines: list[str] = []
-    for name in sorted(COMMANDS):
-        if name in SKIP_COMMANDS:
-            continue
-        cmd = COMMANDS[name]
-        lines.append(f"{cmd.usage}  — {cmd.summary}")
-    return "\n".join(lines)
-
-
 def _redact(value: Json, key: str = "") -> Json:
     if SECRET_NAME_RE.search(str(key)):
         return "***"
@@ -95,21 +92,38 @@ def _sample_records(incoming: list[Json]) -> list[Json]:
     return [_redact(record) for record in incoming[:SAMPLE_LIMIT]]
 
 
-def _system_prompt(has_input: bool) -> str:
+def _command_catalog() -> str:
+    lines: list[str] = []
+    for name in sorted(COMMANDS):
+        if name in SKIP_COMMANDS:
+            continue
+        cmd = COMMANDS[name]
+        lines.append(f"{cmd.usage}  — {cmd.summary}")
+    return "\n".join(lines)
+
+
+def _system_prompt(*, as_pipeline: bool, has_input: bool) -> str:
+    if as_pipeline:
+        return (
+            "You write Open Shell pipelines. Open Shell pipes JSON records, not text.\n"
+            "Reply with ONLY the pipeline on one line. No markdown, no explanation.\n"
+            "Do not use ai, to, json, reload, install, or remove.\n"
+            "Sort with `sort .FIELD [--desc]`. Never write sort-by.\n"
+            "No input records. Write a full pipeline that starts with a source command.\n\n"
+            "Commands:\n"
+            f"{_command_catalog()}"
+        )
     mode = (
-        "Input records are already flowing. Write a filter pipeline only — "
-        "do not start with a source command such as ls, find, or ps."
+        "Input JSON records are provided. Answer using that data."
         if has_input else
-        "No input records. Write a full pipeline that starts with a source command."
+        "No input records were provided. Answer the task directly."
     )
     return (
-        "You write Open Shell pipelines. Open Shell pipes JSON records, not text.\n"
-        "Reply with ONLY the pipeline on one line. No markdown, no explanation.\n"
-        "Do not use ai, to, json, reload, install, or remove.\n"
-        "Sort with `sort .FIELD [--desc]`. Never write sort-by.\n"
-        f"{mode}\n\n"
-        "Commands:\n"
-        f"{_command_catalog()}"
+        "You are answering inside Open Shell, whose pipeline carries JSON records.\n"
+        "Reply with JSON only. No markdown, no pipeline, no explanation.\n"
+        "Prefer a JSON array of objects. A single object is also fine.\n"
+        "NDJSON (one object per line) is also fine.\n"
+        f"{mode}\n"
     )
 
 
@@ -130,24 +144,31 @@ def _user_prompt(task: str, incoming: list[Json]) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def complete_chat(task: str, incoming: list[Json]) -> str:
-    _provider, url, key, model = _ai_config()
+def complete_chat(task: str, incoming: list[Json], *, as_pipeline: bool) -> str:
+    provider, url, key, model = _ai_config()
     body = {
         "model": model,
         "temperature": 0,
         "messages": [
-            {"role": "system", "content": _system_prompt(bool(incoming))},
+            {"role": "system", "content": _system_prompt(
+                as_pipeline=as_pipeline, has_input=bool(incoming))},
             {"role": "user", "content": _user_prompt(task, incoming)},
         ],
     }
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "User-Agent": "openshell",
+    }
+    print(json.dumps(_redact(body), ensure_ascii=False, indent=2))
+    print(provider)
+    if provider == "openrouter":
+        headers["HTTP-Referer"] = "https://openshell.dev"
+        headers["X-Title"] = "Open Shell"
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "User-Agent": "openshell",
-        },
+        headers=headers,
         method="POST",
     )
     try:
@@ -176,16 +197,21 @@ def complete_chat(task: str, incoming: list[Json]) -> str:
     return content
 
 
-def extract_pipeline(text: str) -> str:
+def _unwrap_fences(text: str) -> str:
     stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        inner: list[str] = []
-        for line in lines[1:]:
-            if line.strip().startswith("```"):
-                break
-            inner.append(line)
-        stripped = "\n".join(inner).strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    inner: list[str] = []
+    for line in lines[1:]:
+        if line.strip().startswith("```"):
+            break
+        inner.append(line)
+    return "\n".join(inner).strip()
+
+
+def extract_pipeline(text: str) -> str:
+    stripped = _unwrap_fences(text)
     for line in stripped.splitlines():
         line = line.strip().strip("`")
         if line and not line.startswith("#"):
@@ -194,16 +220,14 @@ def extract_pipeline(text: str) -> str:
                      "try a more specific prompt")
 
 
-def interpret_response(text: str, incoming: list[Json]) -> list[Json]:
-    stripped = text.strip()
-    if stripped.startswith("["):
-        try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError:
-            data = None
-        if isinstance(data, list):
-            return data
-    if stripped.startswith("{"):
+def parse_answer(text: str) -> list[Json]:
+    stripped = _unwrap_fences(text)
+    if not stripped:
+        raise ShellError("ai.bad_response", "AI provider returned an empty reply",
+                         "try a more specific prompt")
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
         records: list[Json] = []
         try:
             for line in stripped.splitlines():
@@ -214,13 +238,18 @@ def interpret_response(text: str, incoming: list[Json]) -> list[Json]:
                 return records
         except json.JSONDecodeError:
             pass
-    pipeline = extract_pipeline(text)
-    return run_pipeline_records(pipeline, incoming if incoming else None)
+        raise ShellError("ai.bad_json", "AI did not return JSON",
+                         "ask for a JSON array of objects") from None
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return [data]
+    return [{"answer": data}]
 
 
 @command(
     "ai",
-    "Ask the configured model to write and run a pipeline",
+    "Ask the model: first command runs a pipeline; later stages answer as JSON",
     "ai PROMPT …",
     source=True,
     filter=True,
@@ -230,16 +259,23 @@ def ai(records: Records, args: list[str]) -> Records:
     if not task:
         raise ShellError("arg.missing", "ai: prompt required",
                          "e.g. ai largest 3 files")
+    stage = pipeline_index()
     incoming = list(records)
-    text = complete_chat(task, incoming)
-    yield from interpret_response(text, incoming)
+    as_first_pipeline = stage == 1
+    text = complete_chat(task, incoming, as_pipeline=as_first_pipeline)
+    if as_first_pipeline:
+        yield from run_pipeline_records(extract_pipeline(text))
+    else:
+        yield from parse_answer(text)
 
 
 @ai.help
 def ai_help() -> None:
     print("ai PROMPT …")
-    print("  Ask the model in ~/.openshell to write and run an Open Shell pipeline.")
-    print('  Settings: "ai" (provider), "ai_key", "ai_mode" (model).')
+    print("  Ask the model in ~/.openshell.")
+    print("  First in a pipeline: the model writes commands, then Open Shell runs them.")
+    print("  Later in a pipeline: the model replies with JSON records.")
+    print('  Settings: "ai" (xai|openai|openrouter), "ai_key", "ai_mode" (model).')
     print("  Examples:")
     print("    ai largest 3 files")
     print("    ls | ai largest 3 files")

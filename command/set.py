@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from openshell import (
-	Records, SETTINGS, ShellError, command, literal, load_settings, save_settings,
+	ENV, Records, ShellError, command, literal, load_settings, save_settings,
 )
 
 
@@ -21,6 +21,6 @@ def set_setting(_input: Records, args: list[str]) -> Records:
 	if problem is not None:
 		raise problem
 	value = literal(" ".join(args[1:]))
-	SETTINGS[name] = value
+	ENV[name] = value
 	save_settings()
 	yield {"name": name, "value": value}

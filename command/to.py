@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import sys
 
-from openshell import SETTINGS, Json, Records, ShellError, command, use_color
+from openshell import ENV, Json, Records, ShellError, command, use_color
 
 DEFAULT_WIDTH = 80
 
 
 def table_width() -> int:
-	value = SETTINGS.get("width", DEFAULT_WIDTH)
+	value = ENV.get("width", DEFAULT_WIDTH)
 	try:
 		width = int(value)
 	except (TypeError, ValueError):

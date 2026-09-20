@@ -40,7 +40,7 @@ __version__ = "0.0.2"
 
 # The surface a command file may rely on: `from openshell import ...`
 __all__ = [
-	"COMMANDS", "Json", "Records", "SETTINGS", "ShellError", "__version__",
+	"COMMANDS", "ENV", "Json", "Records", "ShellError", "__version__",
 	"command", "command_options", "expand_path", "fetch_catalog",
 	"fetch_registry_file", "file_record", "format_datetime", "get_field",
 	"human_size", "history_event", "history_path", "install_from_catalog",
@@ -56,7 +56,7 @@ __all__ = [
 
 Json = Any
 Records = Iterator[Json]
-SETTINGS: dict[str, Json] = {}
+ENV: dict[str, Json] = {}
 
 
 # --------------------------------------------------------------------------
@@ -202,8 +202,8 @@ def settings_path() -> Path:
 
 
 def load_settings() -> ShellError | None:
-	"""Read `~/.openshell` into SETTINGS. Missing settings are not an error."""
-	SETTINGS.clear()
+	"""Read `~/.openshell` into ENV. Missing settings are not an error."""
+	ENV.clear()
 	path = settings_path()
 	if not path.exists():
 		return None
@@ -219,16 +219,16 @@ def load_settings() -> ShellError | None:
 	if not isinstance(data, dict):
 		return ShellError("settings.bad_type", f"{path}: expected a JSON object",
 						  'use JSON like {"ai":"xai","ai_key":"..."}')
-	SETTINGS.update(data)
+	ENV.update(data)
 	return None
 
 
 def save_settings() -> None:
-	"""Write SETTINGS to `~/.openshell` as a JSON object."""
+	"""Write ENV to `~/.openshell` as a JSON object."""
 	path = settings_path()
 	try:
 		path.write_text(
-			json.dumps(SETTINGS, indent=2, ensure_ascii=False) + "\n",
+			json.dumps(ENV, indent=2, ensure_ascii=False) + "\n",
 			encoding="utf-8",
 		)
 	except OSError as err:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openshell import Records, SETTINGS, ShellError, command, load_settings
+from openshell import ENV, Records, ShellError, command, load_settings
 
 
 @command("get", "Get a setting from ~/.openshell", "get NAME", source=True)
@@ -14,7 +14,7 @@ def get_setting(_input: Records, args: list[str]) -> Records:
 	problem = load_settings()
 	if problem is not None:
 		raise problem
-	if name not in SETTINGS:
+	if name not in ENV:
 		raise ShellError("settings.missing", f"no setting named {name!r}",
 						 "run `env` to list settings, or `set NAME VALUE`")
-	yield {"name": name, "value": SETTINGS[name]}
+	yield {"name": name, "value": ENV[name]}

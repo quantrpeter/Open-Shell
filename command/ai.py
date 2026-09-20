@@ -16,7 +16,7 @@ from openshell import (
     COMMANDS,
     Json,
     Records,
-    SETTINGS,
+    ENV,
     ShellError,
     command,
     pipeline_index,
@@ -45,7 +45,7 @@ SECRET_NAME_RE = re.compile(r"(key|token|secret|password|passwd|authorization)",
 
 def _setting(*names: str) -> str:
     for name in names:
-        value = SETTINGS.get(name)
+        value = ENV.get(name)
         if value is None:
             continue
         text = str(value).strip()

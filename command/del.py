@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openshell import Records, SETTINGS, ShellError, command, load_settings, save_settings
+from openshell import ENV, Records, ShellError, command, load_settings, save_settings
 
 
 @command("del", "Delete a setting and save ~/.openshell", "del NAME", source=True)
@@ -14,9 +14,9 @@ def del_setting(_input: Records, args: list[str]) -> Records:
 	problem = load_settings()
 	if problem is not None:
 		raise problem
-	if name not in SETTINGS:
+	if name not in ENV:
 		raise ShellError("settings.missing", f"no setting named {name!r}",
 						 "run `env` to list settings")
-	value = SETTINGS.pop(name)
+	value = ENV.pop(name)
 	save_settings()
 	yield {"name": name, "value": value, "status": "deleted"}

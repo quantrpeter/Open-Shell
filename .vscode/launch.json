@@ -1,0 +1,14 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Open Shell",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/openshell.py",
+			"console": "integratedTerminal",
+			"cwd": "${workspaceFolder}",
+			"justMyCode": true
+		}
+	]
+}

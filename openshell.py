@@ -48,7 +48,8 @@ __all__ = [
 	"iter_file_lines", "iter_processes", "literal", "load_settings",
 	"parse_args", "parse_pipeline", "pipeline_index", "print_default_help",
 	"registry_root", "reload_commands", "remove_user_command",
-	"run_pipeline_records", "settings_path", "show_command_help",
+	"run_pipeline_records", "save_settings", "settings_path",
+	"show_command_help",
 	"sort_key", "ssl_context", "use_color", "user_command_dir",
 	"user_package_dir",
 ]
@@ -220,6 +221,19 @@ def load_settings() -> ShellError | None:
 						  'use JSON like {"ai":"xai","ai_key":"..."}')
 	SETTINGS.update(data)
 	return None
+
+
+def save_settings() -> None:
+	"""Write SETTINGS to `~/.openshell` as a JSON object."""
+	path = settings_path()
+	try:
+		path.write_text(
+			json.dumps(SETTINGS, indent=2, ensure_ascii=False) + "\n",
+			encoding="utf-8",
+		)
+	except OSError as err:
+		raise ShellError("settings.write_failed", f"cannot write {path}: {err}",
+						 "check ~/.openshell permissions") from err
 
 
 def user_command_dir() -> Path:

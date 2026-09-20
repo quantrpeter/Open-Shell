@@ -9,10 +9,9 @@ from __future__ import annotations
 import json
 import sys
 
-from openshell import ENV, Json, Records, ShellError, command, use_color, format_datetime
+from openshell import ENV, Json, Records, ShellError, command, use_color, format_datetime, human_size
 
 DEFAULT_WIDTH = 80
-
 
 def table_width() -> int:
 	value = ENV.get("width", DEFAULT_WIDTH)
@@ -53,17 +52,20 @@ def render_table(rows: list[Json]) -> None:
 		for key in ("modified", "timestamp"):
 			if key in row and row[key] not in (None, ""):
 				row[key] = format_datetime(row[key])
+		if "size" in row and row["size"] not in (None, ""):
+			row["size"] = human_size(row["size"])
 
 	cells = [{c: fit(render_cell(row.get(c))) for c in columns} for row in rows]
 	widths = {c: max(len(c), max(len(cell[c]) for cell in cells)) for c in columns}
-	numeric = {
-		c: all(isinstance(row.get(c), (int, float)) and not isinstance(row.get(c), bool)
-			   for row in rows if row.get(c) is not None)
+	right = {
+		c: c == "size" or all(
+			isinstance(row.get(c), (int, float)) and not isinstance(row.get(c), bool)
+			for row in rows if row.get(c) is not None)
 		for c in columns
 	}
 
 	def line(values: dict[str, str], bold: bool = False) -> None:
-		parts = [values[c].rjust(widths[c]) if numeric[c] else values[c].ljust(widths[c])
+		parts = [values[c].rjust(widths[c]) if right[c] else values[c].ljust(widths[c])
 				 for c in columns]
 		text = "  ".join(parts).rstrip()
 		if bold and use_color(sys.stdout):

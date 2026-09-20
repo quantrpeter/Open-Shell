@@ -313,6 +313,11 @@ def ai(records: Records, args: list[str]) -> Records:
     if not task:
         raise ShellError("arg.missing", "ai: prompt required",
                          "e.g. ai largest 3 files")
+    # if command is "ai provider", then show provider
+    if args and args[0] == "provider":
+        from openshell import ENV
+        print(ENV.get("ai", "unknown"))
+        return ()
     stage = pipeline_index()
     incoming = list(records)
     as_first_pipeline = stage == 1
@@ -331,6 +336,8 @@ def ai_help() -> None:
     print("  Later in a pipeline: the model replies with JSON records.")
     print('  Settings: "ai" (xai|openai|openrouter), "ai_key", "ai_mode" (model).')
     print("  Examples:")
+    print("")
+    print("    ai provider        Show the current AI provider")
     print("    ai largest 3 files")
     print("    ls | ai largest 3 files")
     print("  --help             Show this help")

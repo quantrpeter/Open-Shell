@@ -9,9 +9,18 @@ from __future__ import annotations
 import json
 import sys
 
-from openshell import Json, Records, ShellError, command, use_color
+from openshell import SETTINGS, Json, Records, ShellError, command, use_color
 
-MAX_CELL = 40
+DEFAULT_WIDTH = 80
+
+
+def table_width() -> int:
+	value = SETTINGS.get("width", DEFAULT_WIDTH)
+	try:
+		width = int(value)
+	except (TypeError, ValueError):
+		return DEFAULT_WIDTH
+	return width if width >= 1 else DEFAULT_WIDTH
 
 
 def render_cell(value: Json) -> str:
@@ -26,7 +35,8 @@ def render_cell(value: Json) -> str:
 
 def fit(text: str) -> str:
 	"""Truncate visibly, keeping the tail - the distinctive part of a path."""
-	return text if len(text) <= MAX_CELL else "…" + text[-(MAX_CELL - 1):]
+	width = table_width()
+	return text if len(text) <= width else "…" + text[-(width - 1):]
 
 
 def render_table(rows: list[Json]) -> None:

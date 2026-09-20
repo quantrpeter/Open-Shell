@@ -117,12 +117,13 @@ Errors are records, never raw tracebacks:
 | `sort` | `sort .FIELD [--desc]` | Sort (buffers the stream) |
 | `take` | `take N` | First N records |
 | `substring` | `substring .FIELD START [END]` | Slice a string field (Python indexes) |
-| `to` | `to json\|table [--compact]` | Render the stream |
+| `to` | `to json\|table [--compact]` | Render the stream. Table cell width is `width` in `~/.openshell` (default 80) |
 | `help` | `help [NAME]` | List loaded commands as records |
 | `history` | `history [N]` | Previously run commands (JSON log at `~/.openshell_history`). `!61` reruns event 61. Up-arrow loads the same file |
 | `env` | `env` | Dump settings loaded from `~/.openshell` |
 | `get` | `get NAME` | Read one setting from `~/.openshell` |
 | `set` | `set NAME VALUE …` | Write a setting to `~/.openshell` |
+| `del` | `del NAME` | Delete a setting from `~/.openshell` |
 | `create` | `create .openshell [--force]` | Write a sample `~/.openshell` |
 | `ai` | `ai PROMPT …` | First command: write and run a pipeline. Later stage: JSON answer |
 | `command` | `command` | Same idea: every command as a record |
@@ -145,6 +146,7 @@ openshell -c 'create .openshell'
 openshell -c 'set ai xai'
 openshell -c 'set ai_key "…"'
 openshell -c 'get ai_key'
+openshell -c 'del ai_key'
 openshell -c 'env'
 ```
 

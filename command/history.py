@@ -7,6 +7,9 @@ import re
 
 from openshell import Records, ShellError, command, history_path
 
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+RECORD_COUNT_RE = re.compile(r"\(\d+ records?\)")
+
 
 def _parse_history_line(text: str) -> dict:
 	try:
@@ -51,12 +54,9 @@ def history(_input: Records, args: list[str]) -> Records:
 
 	for number, text in enumerate(lines, start):
 		record = _parse_history_line(text)
-  
-		# replace (xx records) to ""
-		import re
-		result = re.sub(r"\(\d+ records\)", "", record["result"])
-		result = result.replace("\n", "")
-  
+		result = ANSI_RE.sub("", str(record["result"]))
+		result = RECORD_COUNT_RE.sub("", result)
+		result = result.replace("\n", " ").strip()
 		yield {
 			"n": number,
 			"timestamp": record["timestamp"],

@@ -9,7 +9,7 @@ from openshell import (
 	ShellError,
 	command,
 	file_record,
-	load_settings,
+	load_env,
 	parse_args,
 	env_path,
 )
@@ -47,7 +47,7 @@ def create(_input: Records, args: list[str]) -> Records:
 		raise ShellError("fs.write_failed", f"cannot write {path}: {err}",
 						 "check the path and permissions") from err
 
-	problem = load_settings()
+	problem = load_env()
 	if problem is not None:
 		raise problem
 

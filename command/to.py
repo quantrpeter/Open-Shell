@@ -36,7 +36,7 @@ def render_cell(value: Json) -> str:
 def fit(text: str) -> str:
 	"""Truncate visibly, keeping the tail - the distinctive part of a path."""
 	width = table_width()
-	return text if len(text) <= width else "…" + text[-(width - 1):]
+	return text if len(text) <= width else text[0:width]+"…"
 
 
 def render_table(rows: list[Json]) -> None:

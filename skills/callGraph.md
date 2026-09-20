@@ -218,7 +218,7 @@ flowchart TD
   core_show_command_help["show_command_help"]
   core_show_command_help --> core_print_default_help
   core_command["command"]
-  core_load_settings["load_settings"]
+  core_load_env["load_env"]
   core_ssl_context["ssl_context"]
   core_fetch_bytes["fetch_bytes"]
   core_fetch_bytes --> core_ssl_context
@@ -226,7 +226,7 @@ flowchart TD
   core_load_commands["load_commands"]
   core_load_commands --> core_load_command_file
   core_reload_commands["reload_commands"]
-  core_reload_commands --> core_load_settings
+  core_reload_commands --> core_load_env
   core_reload_commands --> core_load_commands
   core_split_stages["split_stages"]
   core_parse_pipeline["parse_pipeline"]
@@ -242,7 +242,7 @@ flowchart TD
   core_repl["repl"]
   core_repl --> core_run_pipeline
   core_main["main"]
-  core_main --> core_load_settings
+  core_main --> core_load_env
   core_main --> core_load_commands
   core_main --> core_repl
   core_main --> core_run_pipeline
@@ -258,7 +258,7 @@ Imports:
 - `import re`
 - `import urllib.error`
 - `import urllib.request`
-- `from openshell import COMMANDS, Json, Records, SETTINGS, ShellError, command, run_pipeline_records, ssl_context`
+- `from openshell import COMMANDS, Json, Records, ENV, ShellError, command, run_pipeline_records, ssl_context`
 
 Registered commands: `ai`
 
@@ -293,7 +293,7 @@ flowchart TD
 
 Calls:
 
-- `SETTINGS.get` (L41) *(openshell)*
+- `ENV.get` (L41) *(openshell)*
 - `str().strip` (L44)
 - `str` (L44) *(builtin)*
 
@@ -643,7 +643,7 @@ Calls:
 Imports:
 
 - `from __future__ import annotations`
-- `from openshell import Records, SETTINGS, command`
+- `from openshell import Records, ENV, command`
 
 Registered commands: `env`
 
@@ -1587,9 +1587,9 @@ flowchart TD
   openshell_py_print_default_help --> openshell_py_command_options
   openshell_py_show_command_help["show_command_help"]
   openshell_py_show_command_help --> openshell_py_print_default_help
-  openshell_py_load_settings["load_settings"]
+  openshell_py_load_env["load_env"]
   openshell_py_env_path["env_path"]
-  openshell_py_load_settings --> openshell_py_env_path
+  openshell_py_load_env --> openshell_py_env_path
   openshell_py_append_history["append_history"]
   openshell_py_history_path["history_path"]
   openshell_py_append_history --> openshell_py_history_path
@@ -1622,7 +1622,7 @@ flowchart TD
   openshell_py_load_command_file["load_command_file"]
   openshell_py_load_commands --> openshell_py_load_command_file
   openshell_py_reload_commands["reload_commands"]
-  openshell_py_reload_commands --> openshell_py_load_settings
+  openshell_py_reload_commands --> openshell_py_load_env
   openshell_py_reload_commands --> openshell_py_load_commands
   openshell_py_file_record["file_record"]
   openshell_py_format_datetime["format_datetime"]
@@ -1650,7 +1650,7 @@ flowchart TD
   openshell_py_repl --> openshell_py_print_error
   openshell_py_main["main"]
   openshell_py_main --> openshell_py_print_error
-  openshell_py_main --> openshell_py_load_settings
+  openshell_py_main --> openshell_py_load_env
   openshell_py_main --> openshell_py_load_commands
   openshell_py_main --> openshell_py_print_warning
   openshell_py_main --> openshell_py_repl
@@ -1749,11 +1749,11 @@ Calls:
 
 - `Path.home` (L190)
 
-### `load_settings`  (line 193)
+### `load_env`  (line 193)
 
 Calls:
 
-- `SETTINGS.clear` (L195) *(openshell)*
+- `ENVclear` (L195) *(openshell)*
 - `env_path` (L196) *(local)*
 - `path.exists` (L197)
 - `path.open` (L200)
@@ -1762,7 +1762,7 @@ Calls:
 - `ShellError` (L206) *(openshell)*
 - `isinstance` (L208) *(builtin)*
 - `ShellError` (L209) *(openshell)*
-- `SETTINGS.update` (L211) *(openshell)*
+- `ENVupdate` (L211) *(openshell)*
 
 ### `user_command_dir`  (line 215)
 
@@ -1986,7 +1986,7 @@ Calls:
 
 - `importlib.invalidate_caches` (L466)
 - `COMMANDS.clear` (L467) *(openshell)*
-- `load_settings` (L468) *(local)*
+- `load_env` (L468) *(local)*
 - `load_commands` (L469) *(local)*
 - `problems.insert` (L471)
 - `sorted` (L472) *(builtin)*
@@ -2246,7 +2246,7 @@ Calls:
 - `args.pop` (L953)
 - `print_error` (L955) *(local)*
 - `ShellError` (L955) *(openshell)*
-- `load_settings` (L959) *(local)*
+- `load_env` (L959) *(local)*
 - `print_error` (L961) *(local)*
 - `load_commands` (L962) *(local)*
 - `print_error` (L963) *(local)*

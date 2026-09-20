@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from openshell import (
-	ENV, Records, ShellError, command, literal, load_settings, save_settings,
+	ENV, Records, ShellError, command, literal, load_env, save_settings,
 )
 
 
@@ -17,7 +17,7 @@ def set_setting(_input: Records, args: list[str]) -> Records:
 	if not name or name.startswith("-"):
 		raise ShellError("arg.bad", f"set: bad name {name!r}",
 						 "use a setting name such as ai, ai_key, mysql_host")
-	problem = load_settings()
+	problem = load_env()
 	if problem is not None:
 		raise problem
 	value = literal(" ".join(args[1:]))

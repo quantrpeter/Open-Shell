@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openshell import ENV, Records, ShellError, command, load_settings, save_settings
+from openshell import ENV, Records, ShellError, command, load_env, save_settings
 
 
 @command("del", "Delete a setting and save ~/.openshell", "del NAME", source=True)
@@ -11,7 +11,7 @@ def del_setting(_input: Records, args: list[str]) -> Records:
 		raise ShellError("arg.missing", "del: NAME required",
 						 "e.g. del ai_key   (or `env` for every setting)")
 	name = args[0]
-	problem = load_settings()
+	problem = load_env()
 	if problem is not None:
 		raise problem
 	if name not in ENV:

@@ -45,7 +45,7 @@ __all__ = [
 	"fetch_registry_file", "file_record", "format_datetime", "get_field",
 	"human_size", "history_event", "history_path", "install_from_catalog",
 	"install_source", "expand_history",
-	"iter_file_lines", "iter_processes", "literal", "load_settings",
+	"iter_file_lines", "iter_processes", "literal", "load_env",
 	"parse_args", "parse_pipeline", "pipeline_index", "print_default_help",
 	"registry_root", "reload_commands", "remove_user_command",
 	"run_pipeline_records", "save_settings", "env_path",
@@ -201,7 +201,7 @@ def env_path() -> Path:
 	return Path.home() / ".openshell"
 
 
-def load_settings() -> ShellError | None:
+def load_env() -> ShellError | None:
 	"""Read `~/.openshell` into ENV. Missing settings are not an error."""
 	ENV.clear()
 	path = env_path()
@@ -843,7 +843,7 @@ def reload_commands() -> tuple[list[str], list[ShellError]]:
 	"""Reload settings and every registered command file from disk."""
 	importlib.invalidate_caches()
 	COMMANDS.clear()
-	settings_problem = load_settings()
+	settings_problem = load_env()
 	problems = refresh_local_packages()
 	problems.extend(load_commands())
 	if settings_problem is not None:
@@ -1377,9 +1377,11 @@ def main(argv: list[str] | None = None) -> int:
 								   "run `openshell --help`"))
 			return 2
 
-	settings_problem = load_settings()
+	settings_problem = load_env()
 	if settings_problem is not None:
 		print_error(settings_problem)
+	for problem in refresh_local_packages():
+		print_error(problem)
 	for problem in load_commands():
 		print_error(problem)
 	if not COMMANDS:

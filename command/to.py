@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sys
 
-from openshell import ENV, Json, Records, ShellError, command, use_color
+from openshell import ENV, Json, Records, ShellError, command, use_color, format_datetime
 
 DEFAULT_WIDTH = 80
 
@@ -50,6 +50,9 @@ def render_table(rows: list[Json]) -> None:
 		for key in row:
 			if key not in columns:
 				columns.append(key)
+		for key in ("modified", "timestamp"):
+			if key in row and row[key] not in (None, ""):
+				row[key] = format_datetime(row[key])
 
 	cells = [{c: fit(render_cell(row.get(c))) for c in columns} for row in rows]
 	widths = {c: max(len(c), max(len(cell[c]) for cell in cells)) for c in columns}

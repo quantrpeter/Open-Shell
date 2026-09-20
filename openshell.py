@@ -860,8 +860,16 @@ SIZE_UNITS = {"b": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3, "tb": 1024**4}
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
-def format_datetime(value: datetime | float | int) -> str:
-	"""Format a datetime or unix timestamp as `YYYY-MM-DD HH:MM:SS`."""
+def format_datetime(value: datetime | float | int | str) -> str:
+	"""Format a datetime, unix timestamp, or ISO string as `YYYY-MM-DD HH:MM:SS`."""
+	if isinstance(value, str):
+		text = value.strip()
+		if not text:
+			return text
+		try:
+			value = datetime.fromisoformat(text)
+		except ValueError:
+			return text
 	if not isinstance(value, datetime):
 		value = datetime.fromtimestamp(value)
 	elif value.tzinfo is not None:
@@ -895,7 +903,7 @@ def file_record(path: Path) -> dict[str, Any] | None:
 		"fullpath": str(path.resolve()),
 		"is_dir": path.is_dir(),
 		"size": stat.st_size,
-		"modified": format_datetime(stat.st_mtime),
+		"modified": stat.st_mtime,
 	}
 
 

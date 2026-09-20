@@ -11,7 +11,7 @@ from openshell import (
 	file_record,
 	load_settings,
 	parse_args,
-	settings_path,
+	env_path,
 )
 
 SAMPLE_SETTINGS = {
@@ -37,7 +37,7 @@ def create(_input: Records, args: list[str]) -> Records:
 		raise ShellError("create.unknown", f"unknown create target: {target!r}",
 						 "supported: create .openshell")
 
-	path = settings_path()
+	path = env_path()
 	if path.exists() and "force" not in flags:
 		raise ShellError("fs.exists", f"already exists: {path}",
 						 "delete it first, or pass --force")

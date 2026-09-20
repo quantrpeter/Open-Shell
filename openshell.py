@@ -48,7 +48,7 @@ __all__ = [
 	"iter_file_lines", "iter_processes", "literal", "load_settings",
 	"parse_args", "parse_pipeline", "pipeline_index", "print_default_help",
 	"registry_root", "reload_commands", "remove_user_command",
-	"run_pipeline_records", "save_settings", "settings_path",
+	"run_pipeline_records", "save_settings", "env_path",
 	"show_command_help",
 	"sort_key", "ssl_context", "use_color", "user_command_dir",
 	"user_package_dir",
@@ -196,7 +196,7 @@ GITHUB_REPO_RE = re.compile(
 )
 
 
-def settings_path() -> Path:
+def env_path() -> Path:
 	"""Where Open Shell user settings are stored."""
 	return Path.home() / ".openshell"
 
@@ -204,7 +204,7 @@ def settings_path() -> Path:
 def load_settings() -> ShellError | None:
 	"""Read `~/.openshell` into ENV. Missing settings are not an error."""
 	ENV.clear()
-	path = settings_path()
+	path = env_path()
 	if not path.exists():
 		return None
 	try:
@@ -225,7 +225,7 @@ def load_settings() -> ShellError | None:
 
 def save_settings() -> None:
 	"""Write ENV to `~/.openshell` as a JSON object."""
-	path = settings_path()
+	path = env_path()
 	try:
 		path.write_text(
 			json.dumps(ENV, indent=2, ensure_ascii=False) + "\n",

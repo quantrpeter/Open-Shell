@@ -1588,8 +1588,8 @@ flowchart TD
   openshell_py_show_command_help["show_command_help"]
   openshell_py_show_command_help --> openshell_py_print_default_help
   openshell_py_load_settings["load_settings"]
-  openshell_py_settings_path["settings_path"]
-  openshell_py_load_settings --> openshell_py_settings_path
+  openshell_py_env_path["env_path"]
+  openshell_py_load_settings --> openshell_py_env_path
   openshell_py_append_history["append_history"]
   openshell_py_history_path["history_path"]
   openshell_py_append_history --> openshell_py_history_path
@@ -1743,7 +1743,7 @@ Calls:
 
 - `COMMANDS.values` (L168) *(openshell)*
 
-### `settings_path`  (line 188)
+### `env_path`  (line 188)
 
 Calls:
 
@@ -1754,7 +1754,7 @@ Calls:
 Calls:
 
 - `SETTINGS.clear` (L195) *(openshell)*
-- `settings_path` (L196) *(local)*
+- `env_path` (L196) *(local)*
 - `path.exists` (L197)
 - `path.open` (L200)
 - `json.load` (L201)

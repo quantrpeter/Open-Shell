@@ -455,7 +455,6 @@ def command_dirs() -> list[Path]:
 		user_command_dir(),		 # extras downloaded from the website
 	]
 	packages = user_package_dir()
-	print("User package directory:", packages)
 	if packages.is_dir():
 		dirs += sorted(path for path in packages.iterdir() if path.is_dir())
 	extra = os.environ.get(COMMAND_PATH_ENV, "")

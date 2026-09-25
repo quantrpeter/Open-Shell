@@ -49,7 +49,7 @@ __all__ = [
 	"parse_args", "parse_pipeline", "pipeline_index", "print_default_help",
 	"registry_root", "reload_commands", "remove_user_command",
 	"run_pipeline_records", "save_settings", "env_path",
-	"show_command_help",
+	"show_command_help", "complete_line", "Completion",
 	"sort_key", "ssl_context", "use_color", "user_command_dir",
 	"user_package_dir",
 ]
@@ -115,6 +115,7 @@ class Command:
 	filter: bool = False  # can also sit after another command
 	origin: str = field(default="builtin")  # which file provided it
 	help_fn: HelpFn | None = None  # optional `cmd --help` printer
+	complete_fn: HelpFn | None = None  # optional Tab completer
 
 
 COMMANDS: dict[str, Command] = {}
@@ -165,18 +166,22 @@ def command(name: str, summary: str, usage: str, *,
 	"""Register a command. Names may contain dots and dashes: `ls`, `sort-by`.
 
 	Decorate with `@fn.help` to custom-print `NAME --help`.
-	If not set, `--help` prints usage and every option in that string.
+	Decorate with `@fn.complete` to custom-define Tab matches.
+	The callable receives a `Completion` and returns a list of strings.
 	"""
 	def register(fn):
 		COMMANDS[name] = Command(name, fn, summary, usage, source, filter)
 
-		def help_decorator(custom: HelpFn) -> HelpFn:
-			for registered in COMMANDS.values():
-				if registered.fn is fn:
-					registered.help_fn = custom
-			return custom
+		def _attach(attr: str, slot: str):
+			def decorator(custom: HelpFn) -> HelpFn:
+				for registered in COMMANDS.values():
+					if registered.fn is fn:
+						setattr(registered, slot, custom)
+				return custom
+			return decorator
 
-		fn.help = help_decorator  # type: ignore[attr-defined]
+		fn.help = _attach("help", "help_fn")  # type: ignore[attr-defined]
+		fn.complete = _attach("complete", "complete_fn")  # type: ignore[attr-defined]
 		return fn
 	return register
 
@@ -424,6 +429,227 @@ def replace_readline_history(typed: str, expanded: str) -> None:
 			return
 		except Exception:
 			continue
+
+
+# --------------------------------------------------------------------------
+# Tab completion (REPL only). Defaults come from the registry; a command
+# may replace the positional candidates with `@fn.complete`.
+# --------------------------------------------------------------------------
+
+REPL_WORDS = ("exit", "quit", "q")
+USAGE_ALT_RE = re.compile(r"(?<![\w./~-])([A-Za-z0-9][\w.-]*(?:\|[A-Za-z0-9][\w.-]*)+)")
+_completer_matches: list[str] = []
+
+
+@dataclass(frozen=True)
+class Completion:
+	"""What the cursor is completing in the last pipeline stage."""
+
+	line: str
+	stage: str
+	tokens: list[str]
+	word: str
+	command: Command | None
+	end: int = 0
+
+
+def _stage_at(line: str, end: int) -> tuple[str, int]:
+	"""Return the unquoted-pipe stage containing `end`, and its start index."""
+	quote: str | None = None
+	escaped = False
+	start = 0
+	limit = min(end, len(line))
+	for index, char in enumerate(line[:limit]):
+		if escaped:
+			escaped = False
+		elif char == "\\":
+			escaped = True
+		elif quote:
+			if char == quote:
+				quote = None
+		elif char in "\"'":
+			quote = char
+		elif char == "|":
+			start = index + 1
+	return line[start:limit], start
+
+
+def _word_bounds(stage: str) -> tuple[list[str], str]:
+	"""Completed tokens before the cursor word, and the word being typed.
+
+	The stage is the text up to the cursor, so a trailing space means the
+	word is empty (complete the next argument, not the previous one).
+	"""
+	try:
+		tokens = shlex.split(stage, posix=True)
+	except ValueError:
+		tokens = stage.split()
+	if stage and not stage[-1].isspace():
+		word = tokens[-1] if tokens else ""
+		return tokens[:-1], word
+	return tokens, ""
+
+
+def completion_at(line: str, end: int | None = None) -> Completion:
+	"""Build a completion context. A bad buffer still returns a context."""
+	if end is None:
+		end = len(line)
+	end = max(0, min(end, len(line)))
+	stage, _start = _stage_at(line, end)
+	tokens, word = _word_bounds(stage)
+	cmd = COMMANDS.get(tokens[0]) if tokens else None
+	return Completion(line[:end], stage, tokens, word, cmd, end)
+
+
+def _filter_prefix(candidates: list[str] | set[str], word: str) -> list[str]:
+	seen: set[str] = set()
+	matches: list[str] = []
+	for item in candidates:
+		text = str(item)
+		if text in seen or not text.startswith(word):
+			continue
+		seen.add(text)
+		matches.append(text)
+	return matches
+
+
+def _usage_alternatives(usage: str) -> list[str]:
+	alts: list[str] = []
+	seen: set[str] = set()
+	for group in USAGE_ALT_RE.findall(usage):
+		for part in group.split("|"):
+			if part not in seen:
+				seen.add(part)
+				alts.append(part)
+	return alts
+
+
+def _usage_wants_path(usage: str) -> bool:
+	return bool(re.search(r"\b(PATH|FILE|SRC|DEST)\b", usage))
+
+
+def complete_path(word: str) -> list[str]:
+	"""Filesystem matches for `word`, with a trailing slash on directories."""
+	expanded = os.path.expanduser(word)
+	if word.endswith(("/", os.sep)) or expanded.endswith(("/", os.sep)):
+		directory = Path(expanded or ".")
+		prefix = ""
+		base = word
+	else:
+		path = Path(expanded)
+		directory = path.parent
+		prefix = path.name
+		base = word[: len(word) - len(prefix)] if prefix else word
+	try:
+		entries = list(directory.iterdir()) if directory.exists() else []
+	except OSError:
+		return []
+	matches: list[str] = []
+	for entry in sorted(entries, key=lambda item: item.name.lower()):
+		if not entry.name.startswith(prefix):
+			continue
+		if entry.name.startswith(".") and not prefix.startswith("."):
+			continue
+		text = base + entry.name
+		if entry.is_dir():
+			text += "/"
+		matches.append(text)
+	return matches
+
+
+def _default_arg_matches(ctx: Completion) -> list[str]:
+	cmd = ctx.command
+	if cmd is None:
+		return []
+	word = ctx.word
+	if word.startswith("-") or not word:
+		flags = _filter_prefix(command_options(cmd.usage), word)
+		if word.startswith("-"):
+			return flags
+	else:
+		flags = []
+	positionals: list[str] = []
+	if _usage_wants_path(cmd.usage):
+		positionals.extend(complete_path(word))
+	if cmd.name in {"get", "del", "set"}:
+		positionals.extend(_filter_prefix(ENV, word))
+	positionals.extend(_filter_prefix(_usage_alternatives(cmd.usage), word))
+	if word.startswith("-"):
+		return flags
+	return positionals + ([] if word else flags)
+
+
+def _custom_matches(ctx: Completion) -> list[str] | None:
+	cmd = ctx.command
+	if cmd is None or cmd.complete_fn is None:
+		return None
+	try:
+		result = cmd.complete_fn(ctx)
+	except Exception:
+		return []
+	if result is None:
+		return []
+	return [str(item) for item in result]
+
+
+def complete_line(line: str, end: int | None = None) -> list[str]:
+	"""Candidates for the cursor in `line`. Safe to call without a TTY."""
+	ctx = completion_at(line, end)
+	word = ctx.word
+	if not ctx.tokens:
+		names = list(COMMANDS) + list(REPL_WORDS)
+		return _filter_prefix(names, word)
+	custom = _custom_matches(ctx)
+	if custom is None:
+		return _default_arg_matches(ctx)
+	custom = _filter_prefix(custom, word)
+	if any(item.startswith("-") for item in custom):
+		return custom
+	flags = _filter_prefix(command_options(ctx.command.usage), word) if ctx.command else []
+	if word.startswith("-"):
+		return flags
+	seen = set(custom)
+	return custom + [flag for flag in flags if flag not in seen]
+
+
+def _readline_completer(text: str, state: int) -> str | None:
+	"""readline callback. `text` is the current word; the buffer has the line."""
+	global _completer_matches
+	if state == 0:
+		try:
+			import readline
+			end = readline.get_endidx()
+			buffer = readline.get_line_buffer()
+		except Exception:
+			end = len(text)
+			buffer = text
+		try:
+			_completer_matches = complete_line(buffer, end)
+		except Exception:
+			_completer_matches = []
+	if state < len(_completer_matches):
+		return _completer_matches[state]
+	return None
+
+
+def bind_readline_completion() -> None:
+	"""Install the Tab completer. No-op when readline is missing.
+
+	macOS libedit ignores `set_completer` until Tab is bound to `rl_complete`.
+	"""
+	try:
+		import readline
+	except ImportError:
+		return
+	try:
+		if "libedit" in getattr(readline, "__doc__", ""):
+			readline.parse_and_bind("bind ^I rl_complete")
+		else:
+			readline.parse_and_bind("tab: complete")
+		readline.set_completer(_readline_completer)
+		readline.set_completer_delims(" \t\n")
+	except Exception:
+		return
 
 
 def append_history(line: str, result: str = "") -> None:
@@ -1297,6 +1523,7 @@ def repl() -> int:
 		pass
 	else:
 		load_readline_history()
+		bind_readline_completion()
 
 	try:
 		os.environ.setdefault("PWD", os.getcwd())

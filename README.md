@@ -56,6 +56,10 @@ openshell -c '!61'
 # In the REPL, `!61` then up-arrow recalls the expanded command, not `!61`
 ```
 
+In the interactive shell, Tab completes command names, usage flags, and
+paths. A command can define its own matches with `@fn.complete` (`create`
+completes `.openshell`).
+
 On a terminal, the last stage renders a table. When piped, it writes one JSON
 object per line (NDJSON).
 

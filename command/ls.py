@@ -7,7 +7,8 @@ from pathlib import Path
 from openshell import Records, ShellError, command, expand_path, file_record, parse_args
 
 
-@command("ls", "List files as JSON records", "ls [PATH …] [-r] [-a] [-l]", source=True)
+@command("ls", "List files as JSON records",
+		 "ls [PATH …] [-r|--recursive] [-a|--all] [-l|--long]", source=True)
 def ls(_input: Records, args: list[str]) -> Records:
 	flags, _opts, paths = parse_args(
 		args, "ls",
@@ -47,7 +48,7 @@ def filterObject(obj):
 
 @ls.help
 def ls_help() -> None:
-	print("ls [PATH …] [-r] [-a] [-l]")
+	print("ls [PATH …] [-r|--recursive] [-a|--all] [-l|--long]")
 	print("  List files as JSON records. PATH defaults to the current directory.")
 	print("  -r, --recursive	Walk directories")
 	print("  -a, --all		  Include hidden names")

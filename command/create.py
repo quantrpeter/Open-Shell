@@ -54,3 +54,9 @@ def create(_input: Records, args: list[str]) -> Records:
 	record = file_record(path)
 	if record is not None:
 		yield record
+
+
+@create.complete
+def create_complete(ctx) -> list[str]:
+	"""Tab-complete the sample-file target. Flags stay with the core."""
+	return sorted(target for target in TARGETS if target.startswith(ctx.word))

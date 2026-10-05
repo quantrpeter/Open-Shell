@@ -22,3 +22,4 @@ rfc3986==2.0.0
 rich==15.0.0
 twine==7.0.0
 urllib3==2.7.0
+cryptography==50.0.2

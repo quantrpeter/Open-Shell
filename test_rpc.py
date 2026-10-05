@@ -192,6 +192,20 @@ class InProcessTests(unittest.TestCase):
 			openshell.run_pipeline_records(line)
 		self.assertEqual(ctx.exception.code, "cmd.not_found")
 
+	def test_missing_module_hint_suggests_pip(self) -> None:
+		with tempfile.TemporaryDirectory() as folder:
+			Path(folder, "needs_dep.py").write_text("import not_a_real_module_xyz\n")
+			Path(folder, "needs_local.py").write_text("import sibling_helper\n")
+			Path(folder, "sibling_helper.py").write_text("VALUE = 1\n")
+			os.environ[openshell.COMMAND_PATH_ENV] = folder
+			try:
+				problems = {p.message.split(":")[0]: p for p in openshell.load_commands()}
+			finally:
+				del os.environ[openshell.COMMAND_PATH_ENV]
+		self.assertIn("pip install not_a_real_module_xyz", problems["needs_dep.py"].hint)
+		self.assertNotIn("pip install", problems["needs_local.py"].hint)
+		self.assertIn(str(openshell.user_site_dir()), sys.path)
+
 	def test_windows_process_rows(self) -> None:
 		text = json.dumps([{"ProcessId": 4, "ParentProcessId": 0, "Name": "System",
 							"WorkingSetSize": 2048, "CommandLine": None}])

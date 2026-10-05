@@ -58,6 +58,7 @@ __all__ = [
 	"sort_key", "ssl_context", "use_color", "user_command_dir",
 	"user_package_dir", "IS_WINDOWS", "bootstrap", "cancel_event",
 	"current_dir", "history_commands", "resolve_command", "rpc_serve", "run_line",
+	"run_external", "user_site_dir",
 ]
 
 Json = Any
@@ -265,6 +266,11 @@ def save_settings() -> None:
 def user_command_dir() -> Path:
 	"""Installed extras live here, not in the pip package."""
 	return Path.home() / ".config" / "oshell" / "command"
+
+
+def user_site_dir() -> Path:
+	"""Python packages installed with the `pip` command, for command files to import."""
+	return Path.home() / ".config" / "oshell" / "site-packages"
 
 
 def user_package_dir() -> Path:
@@ -1036,6 +1042,11 @@ def load_commands() -> list[ShellError]:
 	# than importing a second copy of this file with an empty one.
 	sys.modules.setdefault("openshell", sys.modules[__name__])
 
+	# The packaged app's Python has no other site-packages, so `pip` installs here.
+	site = str(user_site_dir())
+	if site not in sys.path:
+		sys.path.append(site)
+
 	problems: list[ShellError] = []
 	for directory in command_dirs():
 		if not directory.is_dir():
@@ -1047,10 +1058,14 @@ def load_commands() -> list[ShellError]:
 				for name in load_command_file(path):
 					COMMANDS[name].origin = _command_origin(path)
 			except Exception as err:
+				hint = "fix the file or move it out of the command folder"
+				module = (err.name or "").split(".")[0] if isinstance(err, ModuleNotFoundError) else ""
+				if module and not (path.parent / f"{module}.py").exists() and not (path.parent / module).exists():
+					hint = f"run `pip install {module}`, then `reload`"
 				problems.append(ShellError(
 					"command.load_failed",
 					f"{path.name}: {type(err).__name__}: {err}",
-					"fix the file or move it out of the command folder"))
+					hint))
 	return problems
 
 
@@ -1443,7 +1458,7 @@ def external_command(name: str) -> Command | None:
 		return None
 
 	def run(_input: Records, args: list[str]) -> Records:
-		yield from _run_external(path, name, args)
+		yield from run_external(path, name, args)
 
 	return Command(name, run, f"Run {path}", f"{name} [ARGS]", source=True, origin="external")
 
@@ -1456,7 +1471,7 @@ def resolve_command(name: str, allow_external: bool = True) -> Command | None:
 	return cmd
 
 
-def _run_external(path: str, name: str, args: list[str]) -> Records:
+def run_external(path: str, name: str, args: list[str]) -> Records:
 	"""Yield `{line, stream}` for each output line. No stdin, so no prompts."""
 	try:
 		proc = subprocess.Popen(
@@ -1539,8 +1554,8 @@ def run_pipeline_records(line: str, records: Records | None = None) -> list[Json
 	while parsed and parsed[-1][0] == "to":
 		parsed.pop()
 	for name, _args in parsed:
-		if name == "ai":
-			raise ShellError("ai.recursive", "generated pipeline must not call `ai`",
+		if name in ("ai", "pip"):
+			raise ShellError("ai.recursive", f"generated pipeline must not call `{name}`",
 							 "ask for ls / where / sort / take instead")
 	saved = _pipeline_index
 	# `ai` output must never reach external programs.

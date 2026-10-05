@@ -19,14 +19,19 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import inspect
+import io
 import json
 import os
+import queue
 import re
 import shlex
 import shutil
 import ssl
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -51,12 +56,28 @@ __all__ = [
 	"run_pipeline_records", "save_settings", "env_path",
 	"show_command_help", "complete_line", "Completion",
 	"sort_key", "ssl_context", "use_color", "user_command_dir",
-	"user_package_dir",
+	"user_package_dir", "IS_WINDOWS", "bootstrap", "cancel_event",
+	"current_dir", "history_commands", "resolve_command", "rpc_serve", "run_line",
 ]
 
 Json = Any
 Records = Iterator[Json]
 ENV: dict[str, Json] = {}
+IS_WINDOWS = os.name == "nt"
+
+# Set by a host (the RPC server) to stop the running pipeline between records.
+cancel_event = threading.Event()
+
+
+def _shlex_split(text: str, *, comments: bool = False) -> list[str]:
+	"""shlex.split, but backslashes stay literal on Windows so `C:\\Users` survives."""
+	if not IS_WINDOWS:
+		return shlex.split(text, comments=comments)
+	lex = shlex.shlex(text, posix=True)
+	lex.whitespace_split = True
+	lex.escape = ""
+	lex.commenters = "#" if comments else ""
+	return list(lex)
 
 
 # --------------------------------------------------------------------------
@@ -462,7 +483,7 @@ def _stage_at(line: str, end: int) -> tuple[str, int]:
 	for index, char in enumerate(line[:limit]):
 		if escaped:
 			escaped = False
-		elif char == "\\":
+		elif char == "\\" and not IS_WINDOWS:
 			escaped = True
 		elif quote:
 			if char == quote:
@@ -481,7 +502,7 @@ def _word_bounds(stage: str) -> tuple[list[str], str]:
 	word is empty (complete the next argument, not the previous one).
 	"""
 	try:
-		tokens = shlex.split(stage, posix=True)
+		tokens = _shlex_split(stage)
 	except ValueError:
 		tokens = stage.split()
 	if stage and not stage[-1].isspace():
@@ -1219,9 +1240,47 @@ def iter_file_lines(path: Path) -> Iterator[dict[str, Any]]:
 			yield {"path": str(path), "n": number, "text": line.rstrip("\n")}
 
 
+def _windows_process_rows(text: str) -> Iterator[dict[str, Any]]:
+	"""Turn `Get-CimInstance Win32_Process | ConvertTo-Json` into process records."""
+	data = json.loads(text) if text.strip() else []
+	if isinstance(data, dict):
+		data = [data]
+	for item in data:
+		working_set = item.get("WorkingSetSize")
+		yield {
+			"pid": int(item.get("ProcessId") or 0),
+			"ppid": int(item.get("ParentProcessId") or 0),
+			"user": "",
+			"cpu": None,
+			"mem": None,
+			"rss": int(working_set) // 1024 if working_set else 0,
+			"state": "",
+			"etime": "",
+			"command": item.get("CommandLine") or item.get("Name") or "",
+		}
+
+
+def _iter_processes_windows() -> Iterator[dict[str, Any]]:
+	script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+			  "Get-CimInstance Win32_Process | "
+			  "Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize,CommandLine | "
+			  "ConvertTo-Json -Compress")
+	try:
+		output = subprocess.check_output(
+			["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+			text=True, encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL,
+			creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+	except (FileNotFoundError, subprocess.CalledProcessError) as err:
+		raise ShellError("proc.unavailable", "cannot list processes with PowerShell",
+						 "make sure powershell is on PATH") from err
+	yield from _windows_process_rows(output)
+
+
 def iter_processes() -> Iterator[dict[str, Any]]:
-	"""Yield process records from `ps` (macOS and Linux)."""
-	import subprocess
+	"""Yield process records from `ps` (macOS, Linux) or PowerShell (Windows)."""
+	if IS_WINDOWS:
+		yield from _iter_processes_windows()
+		return
 
 	attempts = [
 		["ps", "ax", "-o", "pid,ppid,user,%cpu,%mem,rss,state,etime,command"],
@@ -1322,7 +1381,7 @@ def split_stages(line: str) -> list[str]:
 		if escaped:
 			buffer.append(char)
 			escaped = False
-		elif char == "\\":
+		elif char == "\\" and not IS_WINDOWS:
 			buffer.append(char)
 			escaped = True
 		elif quote:
@@ -1348,7 +1407,7 @@ def parse_pipeline(line: str) -> list[tuple[str, list[str]]]:
 	for stage in split_stages(line):
 		if not stage:
 			continue
-		tokens = shlex.split(stage, comments=True)
+		tokens = _shlex_split(stage, comments=True)
 		if tokens:
 			parsed.append((tokens[0], tokens[1:]))
 	return parsed
@@ -1377,9 +1436,75 @@ def _stage_records(records: Records, index: int) -> Records:
         return
 
 
+def external_command(name: str) -> Command | None:
+	"""A program on PATH, run as a source stage; its output lines become records."""
+	path = shutil.which(name)
+	if path is None:
+		return None
+
+	def run(_input: Records, args: list[str]) -> Records:
+		yield from _run_external(path, name, args)
+
+	return Command(name, run, f"Run {path}", f"{name} [ARGS]", source=True, origin="external")
+
+
+def resolve_command(name: str, allow_external: bool = True) -> Command | None:
+	"""Registered command first, then (optionally) a program on PATH."""
+	cmd = COMMANDS.get(name)
+	if cmd is None and allow_external:
+		cmd = external_command(name)
+	return cmd
+
+
+def _run_external(path: str, name: str, args: list[str]) -> Records:
+	"""Yield `{line, stream}` for each output line. No stdin, so no prompts."""
+	try:
+		proc = subprocess.Popen(
+			[path, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+			creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+	except OSError as err:
+		raise ShellError("exec.failed", f"cannot run {name}: {err}",
+						 "check that the program exists and is executable") from err
+
+	lines: queue.Queue[tuple[str, str | None]] = queue.Queue()
+
+	def pump(stream, label: str) -> None:
+		for text in stream:
+			lines.put((label, text.rstrip("\r\n")))
+		lines.put((label, None))
+
+	for stream, label in ((proc.stdout, "stdout"), (proc.stderr, "stderr")):
+		threading.Thread(target=pump, args=(stream, label), daemon=True).start()
+
+	open_streams = 2
+	try:
+		while open_streams:
+			try:
+				label, text = lines.get(timeout=0.1)
+			except queue.Empty:
+				if cancel_event.is_set():
+					return
+				continue
+			if text is None:
+				open_streams -= 1
+				continue
+			yield {"line": text, "stream": label}
+		code = proc.wait()
+	finally:
+		if proc.poll() is None:
+			proc.kill()
+			proc.wait()
+	if code != 0:
+		raise ShellError("exec.exit", f"{name} exited with status {code}",
+						 "see the output lines above")
+
+
 def iter_pipeline(
 	parsed: list[tuple[str, list[str]]],
 	records: Records | None = None,
+	*,
+	allow_external: bool = True,
 ) -> Records:
 	"""Run parsed stages and yield records. No auto-sink, no history."""
 	global _pipeline_index
@@ -1389,7 +1514,7 @@ def iter_pipeline(
 	stream: Records = iter(()) if records is None else records
 	resolved: list[tuple[Command, list[str]]] = []
 	for name, args in parsed:
-		cmd = COMMANDS.get(name)
+		cmd = resolve_command(name, allow_external)
 		if cmd is None:
 			raise ShellError("cmd.not_found", f"command not found: {name}",
 							 "run `help` for built-ins, or `search` / `install NAME` for extras")
@@ -1418,10 +1543,40 @@ def run_pipeline_records(line: str, records: Records | None = None) -> list[Json
 			raise ShellError("ai.recursive", "generated pipeline must not call `ai`",
 							 "ask for ls / where / sort / take instead")
 	saved = _pipeline_index
+	# `ai` output must never reach external programs.
 	try:
-		return list(iter_pipeline(parsed, records))
+		return list(iter_pipeline(parsed, records, allow_external=False))
 	finally:
 		_pipeline_index = saved
+
+
+def run_line(line: str) -> Records:
+	"""Embedding entry point (GUIs, RPC): run one line and return its records.
+
+	No auto-sink, no TTY checks, no history write. A trailing `to` is dropped so
+	the host decides how to render. `NAME --help` yields one `{"$t": "text"}`
+	record. Raises ShellError, possibly on the first `next()`.
+	"""
+	line = expand_history(line)
+	try:
+		parsed = parse_pipeline(line)
+	except ValueError as err:
+		raise ShellError("parse.invalid", f"cannot parse line: {err}",
+						 "check for an unclosed quote") from err
+	while parsed and parsed[-1][0] == "to":
+		parsed.pop()
+	for name, args in parsed:
+		cmd = resolve_command(name)
+		if cmd is not None and cmd.origin != "external" and "--help" in args:
+			buffer = io.StringIO()
+			saved_stdout = sys.stdout
+			sys.stdout = buffer
+			try:
+				show_command_help(cmd)
+			finally:
+				sys.stdout = saved_stdout
+			return iter([{"$t": "text", "text": buffer.getvalue()}])
+	return iter_pipeline(parsed)
 
 
 def run_pipeline(line: str, *, force_json: bool = False) -> int:
@@ -1448,11 +1603,11 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
 			parsed.append(("to", [default]))
 
 		for name, args in parsed:
-			cmd = COMMANDS.get(name)
+			cmd = resolve_command(name)
 			if cmd is None:
 				raise ShellError("cmd.not_found", f"command not found: {name}",
 								 "run `help` for built-ins, or `search` / `install NAME` for extras")
-			if "--help" in args:
+			if "--help" in args and cmd.origin != "external":
 				show_command_help(cmd)
 				return 0
 
@@ -1478,20 +1633,25 @@ BANNER = (f"Open Shell {__version__}  -  JSON pipelines. "
 		  "Try `help`, or `exit` or `q` to leave.")
 
 
-def repl_cwd() -> str:
-	"""Directory shown in the prompt: logical `$PWD` when it still matches."""
+def current_dir() -> str:
+	"""Absolute working directory: logical `$PWD` when it still matches."""
 	try:
 		physical = os.getcwd()
 	except OSError:
 		physical = os.environ.get("PWD") or "?"
 	logical = os.environ.get("PWD")
-	path = physical
 	if logical:
 		try:
 			if os.path.samefile(logical, physical):
-				path = logical
+				return logical
 		except OSError:
 			pass
+	return physical
+
+
+def repl_cwd() -> str:
+	"""Directory shown in the prompt, with the home folder shortened to `~`."""
+	path = current_dir()
 	home = os.path.expanduser("~")
 	if path == home:
 		return "~"
@@ -1557,12 +1717,295 @@ def repl() -> int:
 			print_error(ShellError("internal", f"{type(err).__name__}: {err}"))
 
 
+# --------------------------------------------------------------------------
+# RPC frontend: newline-delimited JSON over stdin/stdout, for GUI hosts
+#
+#   request   {"id": 1, "method": "run", "params": {"line": "ls | take 3"}}
+#   stream    {"id": 1, "event": "records", "data": [...]}
+#             {"id": 1, "event": "error", "error": {...}}
+#   response  {"id": 1, "result": {...}}  or  {"id": 1, "error": {...}}
+#
+# Methods: info, run, complete, history, cancel (soft), shutdown. One request
+# runs at a time; `cancel` is read on its own thread. A host that needs a hard
+# stop kills the process (cwd and $PWD are per-process state).
+# --------------------------------------------------------------------------
+
+RPC_PROTOCOL = 1
+RPC_BATCH_MAX = 500
+RPC_FLUSH_SECONDS = 0.03
+
+
+def bootstrap() -> list[ShellError]:
+	"""Load settings and commands. Returns problems; none are fatal."""
+	problems: list[ShellError] = []
+	settings_problem = load_env()
+	if settings_problem is not None:
+		problems.append(settings_problem)
+	problems.extend(refresh_local_packages())
+	problems.extend(load_commands())
+	return problems
+
+
+def history_commands(limit: int = 500) -> list[str]:
+	"""Most recent distinct commands from the history file, oldest first."""
+	try:
+		lines = history_path().read_text(encoding="utf-8", errors="replace").splitlines()
+	except OSError:
+		return []
+	seen: set[str] = set()
+	commands: list[str] = []
+	for text in reversed(lines):
+		command_text = _history_command_text(text).strip()
+		if command_text and command_text not in seen:
+			seen.add(command_text)
+			commands.append(command_text)
+		if len(commands) >= limit:
+			break
+	commands.reverse()
+	return commands
+
+
+def _scrub(value: Any) -> Any:
+	"""Replace NaN and infinity, which are not valid JSON."""
+	if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+		return None
+	if isinstance(value, dict):
+		return {key: _scrub(item) for key, item in value.items()}
+	if isinstance(value, (list, tuple)):
+		return [_scrub(item) for item in value]
+	return value
+
+
+class _RpcBatcher:
+	"""Group records into few messages; a timer flushes slow trickles."""
+
+	def __init__(self, emit: Callable[[dict[str, Any]], None], rid: Any) -> None:
+		self._emit = emit
+		self._rid = rid
+		self._items: list[Json] = []
+		self._lock = threading.Lock()
+		self._stop = threading.Event()
+		self._thread = threading.Thread(target=self._loop, daemon=True)
+		self._thread.start()
+
+	def _loop(self) -> None:
+		while not self._stop.wait(RPC_FLUSH_SECONDS):
+			self.flush()
+
+	def _flush_locked(self) -> None:
+		if self._items:
+			items, self._items = self._items, []
+			self._emit({"id": self._rid, "event": "records", "data": items})
+
+	def add(self, record: Json) -> None:
+		with self._lock:
+			self._items.append(record)
+			if len(self._items) >= RPC_BATCH_MAX:
+				self._flush_locked()
+
+	def flush(self) -> None:
+		with self._lock:
+			self._flush_locked()
+
+	def close(self) -> None:
+		self._stop.set()
+		self._thread.join()
+		self.flush()
+
+
+def _make_emitter(out) -> Callable[[dict[str, Any]], None]:
+	lock = threading.Lock()
+
+	def emit(message: dict[str, Any]) -> None:
+		try:
+			text = json.dumps(message, ensure_ascii=False, default=str, allow_nan=False)
+		except ValueError:
+			text = json.dumps(_scrub(message), ensure_ascii=False, default=str)
+		with lock:
+			out.write(text + "\n")
+			out.flush()
+
+	return emit
+
+
+def _rpc_info(problems: list[ShellError]) -> dict[str, Any]:
+	return {
+		"protocol": RPC_PROTOCOL,
+		"version": __version__,
+		"platform": sys.platform,
+		"sep": os.sep,
+		"home": str(Path.home()),
+		"cwd": current_dir(),
+		"commands": [
+			{"name": cmd.name, "summary": cmd.summary, "usage": cmd.usage, "origin": cmd.origin}
+			for cmd in sorted(COMMANDS.values(), key=lambda item: item.name)
+		],
+		"problems": [problem.to_record() for problem in problems],
+	}
+
+
+def _rpc_complete(params: dict[str, Any]) -> dict[str, Any]:
+	line = params.get("line")
+	if not isinstance(line, str):
+		raise ShellError("rpc.bad_params", "complete needs a `line` string")
+	cursor = params.get("cursor")
+	cursor = cursor if isinstance(cursor, int) else len(line)
+	cursor = max(0, min(cursor, len(line)))
+	head = line[:cursor]
+	start = max(head.rfind(" "), head.rfind("\t"), head.rfind("|")) + 1
+	try:
+		items = complete_line(line, cursor)
+	except Exception:
+		items = []
+	return {"start": start, "end": cursor, "items": items}
+
+
+def _rpc_run(emit: Callable[[dict[str, Any]], None], rid: Any, params: dict[str, Any],
+			 state: dict[str, Any], state_lock: threading.Lock, cancelled_ids: set[Any]) -> None:
+	line = params.get("line")
+	if not isinstance(line, str):
+		raise ShellError("rpc.bad_params", "run needs a `line` string")
+	with state_lock:
+		cancel_event.clear()
+		state["running"] = rid
+		if rid in cancelled_ids:
+			cancelled_ids.discard(rid)
+			cancel_event.set()
+
+	started = time.monotonic()
+	count = 0
+	kept = 0
+	summary: list[str] = []
+	error: dict[str, str] | None = None
+	iterator: Records | None = None
+	batch = _RpcBatcher(emit, rid)
+	try:
+		line = expand_history(line)
+		iterator = run_line(line)
+		for record in iterator:
+			if cancel_event.is_set():
+				break
+			count += 1
+			batch.add(record)
+			if kept < HISTORY_RESULT_MAX:
+				text = json.dumps(record, ensure_ascii=False, default=str)
+				summary.append(text)
+				kept += len(text) + 1
+	except ShellError as err:
+		error = err.to_record()
+	except Exception as err:  # never leak a traceback to the host
+		error = ShellError("internal", f"{type(err).__name__}: {err}").to_record()
+	finally:
+		batch.close()
+		close = getattr(iterator, "close", None)
+		if close is not None:
+			try:
+				close()
+			except Exception:
+				pass
+
+	cancelled = cancel_event.is_set()
+	with state_lock:
+		state["running"] = None
+	if error is not None:
+		summary.append(json.dumps(error, ensure_ascii=False))
+		emit({"id": rid, "event": "error", "error": error})
+	if line.strip():
+		append_history(line, "\n".join(summary))
+	emit({"id": rid, "result": {
+		"count": count,
+		"ms": round((time.monotonic() - started) * 1000),
+		"cwd": current_dir(),
+		"failed": error is not None,
+		"cancelled": cancelled,
+	}})
+
+
+def rpc_serve(problems: list[ShellError] | None = None) -> int:
+	"""Serve the RPC protocol on stdin/stdout until EOF or `shutdown`."""
+	problems = problems or []
+	# Keep the protocol channel private: stray prints from commands go to stderr.
+	out = os.fdopen(os.dup(1), "w", encoding="utf-8", newline="\n")
+	os.dup2(2, 1)
+	sys.stdout = sys.stderr
+	try:
+		sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+	except (AttributeError, ValueError):
+		pass
+	emit = _make_emitter(out)
+	source = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
+	requests: queue.Queue[dict[str, Any] | None] = queue.Queue()
+	state: dict[str, Any] = {"running": None}
+	state_lock = threading.Lock()
+	cancelled_ids: set[Any] = set()
+
+	def reader() -> None:
+		try:
+			for raw in source:
+				text = raw.strip()
+				if not text:
+					continue
+				try:
+					message = json.loads(text)
+				except ValueError:
+					emit({"id": None, "error": ShellError("rpc.bad_json", "invalid JSON line").to_record()})
+					continue
+				if not isinstance(message, dict):
+					continue
+				if message.get("method") == "cancel":
+					params = message.get("params")
+					target = params.get("id") if isinstance(params, dict) else None
+					with state_lock:
+						if state["running"] == target:
+							cancel_event.set()
+						else:
+							cancelled_ids.add(target)
+					continue
+				requests.put(message)
+		except (OSError, ValueError):
+			pass
+		requests.put(None)
+
+	threading.Thread(target=reader, daemon=True).start()
+
+	while True:
+		message = requests.get()
+		if message is None:
+			return 0
+		rid = message.get("id")
+		method = message.get("method")
+		params = message.get("params")
+		params = params if isinstance(params, dict) else {}
+		try:
+			if method == "run":
+				_rpc_run(emit, rid, params, state, state_lock, cancelled_ids)
+			elif method == "info":
+				emit({"id": rid, "result": _rpc_info(problems)})
+			elif method == "complete":
+				emit({"id": rid, "result": _rpc_complete(params)})
+			elif method == "history":
+				emit({"id": rid, "result": {"history": history_commands()}})
+			elif method == "shutdown":
+				emit({"id": rid, "result": {}})
+				return 0
+			else:
+				raise ShellError("rpc.unknown_method", f"unknown method: {method!r}",
+								 "use info, run, complete, history, cancel or shutdown")
+		except ShellError as err:
+			emit({"id": rid, "error": err.to_record()})
+		except (BrokenPipeError, ConnectionResetError):
+			return 0
+		except Exception as err:
+			emit({"id": rid, "error": ShellError("internal", f"{type(err).__name__}: {err}").to_record()})
+
+
 USAGE = """Open Shell - the AI-era shell for everyone.
 
 Usage:
   openshell				 start the interactive shell
   openshell -c PIPELINE	 run one pipeline and exit
   openshell --json -c ...   force NDJSON output
+  openshell --rpc		   JSON-RPC over stdin/stdout, for GUI hosts
   openshell --version
 
 Install:
@@ -1590,6 +2033,7 @@ def main(argv: list[str] | None = None) -> int:
 	args = list(sys.argv[1:] if argv is None else argv)
 	pipeline: str | None = None
 	force_json = False
+	rpc = False
 
 	while args:
 		arg = args.pop(0)
@@ -1601,6 +2045,8 @@ def main(argv: list[str] | None = None) -> int:
 			return 0
 		if arg == "--json":
 			force_json = True
+		elif arg == "--rpc":
+			rpc = True
 		elif arg == "-c":
 			if not args:
 				print_error(ShellError("arg.missing", "-c needs a pipeline",
@@ -1612,12 +2058,14 @@ def main(argv: list[str] | None = None) -> int:
 								   "run `openshell --help`"))
 			return 2
 
-	settings_problem = load_env()
-	if settings_problem is not None:
-		print_error(settings_problem)
-	for problem in refresh_local_packages():
-		print_error(problem)
-	for problem in load_commands():
+	if rpc:
+		code = rpc_serve(bootstrap())
+		# The stdin reader thread is blocked in read(); normal interpreter shutdown
+		# would abort on its buffer lock, so skip finalization.
+		sys.stderr.flush()
+		os._exit(code)
+
+	for problem in bootstrap():
 		print_error(problem)
 	if not COMMANDS:
 		print_warning("no commands were loaded; is the `command/` folder missing?")

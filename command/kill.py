@@ -9,10 +9,13 @@ from openshell import Records, ShellError, command
 
 
 SIGNALS = {
-	"HUP": signal.SIGHUP, "INT": signal.SIGINT, "QUIT": signal.SIGQUIT,
-	"KILL": signal.SIGKILL, "TERM": signal.SIGTERM, "STOP": signal.SIGSTOP,
-	"CONT": signal.SIGCONT, "USR1": signal.SIGUSR1, "USR2": signal.SIGUSR2,
+	name: int(getattr(signal, f"SIG{name}"))
+	for name in ("HUP", "INT", "QUIT", "KILL", "TERM", "STOP", "CONT", "USR1", "USR2")
+	if hasattr(signal, f"SIG{name}")
 }
+# Windows has no SIGKILL; os.kill there ends the process with the number as exit code.
+SIGNALS.setdefault("KILL", 9)
+SIGNALS.setdefault("TERM", 15)
 
 
 def _parse_signal(text: str) -> int:

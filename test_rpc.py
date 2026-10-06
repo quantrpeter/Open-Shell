@@ -139,21 +139,27 @@ class RpcTests(unittest.TestCase):
 		self.client.call("shutdown")
 		self.assertEqual(self.client.proc.wait(timeout=10), 0)
 
+	def test_bare_program_is_not_a_command(self) -> None:
+		events, response = self.client.call("run", line=f'"{sys.executable}" -c "print(1)"')
+		errors = [e for e in events if e["event"] == "error"]
+		self.assertEqual(errors[0]["error"]["code"], "cmd.not_found")
+		self.assertTrue(response["result"]["failed"])
+
 	def test_external_program_lines(self) -> None:
-		line = f'"{sys.executable}" -c "print(\'hello\')"'
+		line = f'ext "{sys.executable}" -c "print(\'hello\')"'
 		events, response = self.client.call("run", line=line)
 		self.assertEqual(records(events), [{"line": "hello", "stream": "stdout"}])
 		self.assertFalse(response["result"]["failed"])
 
 	def test_external_failure_is_error(self) -> None:
-		line = f'"{sys.executable}" -c "import sys; sys.exit(3)"'
+		line = f'ext "{sys.executable}" -c "import sys; sys.exit(3)"'
 		events, response = self.client.call("run", line=line)
 		errors = [e for e in events if e["event"] == "error"]
 		self.assertEqual(errors[0]["error"]["code"], "exec.exit")
 		self.assertTrue(response["result"]["failed"])
 
 	def test_soft_cancel_stops_silent_external_program(self) -> None:
-		line = f'"{sys.executable}" -c "import time; print(1, flush=True); time.sleep(60)"'
+		line = f'ext "{sys.executable}" -c "import time; print(1, flush=True); time.sleep(60)"'
 		rid = self.client.send("run", line=line)
 		first = self.client.message()
 		self.assertEqual(first["event"], "records")
@@ -167,7 +173,7 @@ class RpcTests(unittest.TestCase):
 		self.assertLess(time.monotonic() - started, 5)
 
 	def test_cancel_before_start_is_honoured(self) -> None:
-		slow = f'"{sys.executable}" -c "import time; time.sleep(60)"'
+		slow = f'ext "{sys.executable}" -c "import time; time.sleep(60)"'
 		first = self.client.send("run", line=slow)
 		queued = self.client.send("run", line="ls")
 		self.client.send("cancel", id=queued)
@@ -187,10 +193,10 @@ class InProcessTests(unittest.TestCase):
 		openshell.bootstrap()
 
 	def test_ai_pipelines_cannot_reach_external_programs(self) -> None:
-		line = f'"{sys.executable}" -c "print(1)"'
+		line = f'ext "{sys.executable}" -c "print(1)"'
 		with self.assertRaises(openshell.ShellError) as ctx:
 			openshell.run_pipeline_records(line)
-		self.assertEqual(ctx.exception.code, "cmd.not_found")
+		self.assertEqual(ctx.exception.code, "ai.recursive")
 
 	def test_missing_module_hint_suggests_pip(self) -> None:
 		with tempfile.TemporaryDirectory() as folder:

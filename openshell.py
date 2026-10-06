@@ -1451,24 +1451,9 @@ def _stage_records(records: Records, index: int) -> Records:
         return
 
 
-def external_command(name: str) -> Command | None:
-	"""A program on PATH, run as a source stage; its output lines become records."""
-	path = shutil.which(name)
-	if path is None:
-		return None
-
-	def run(_input: Records, args: list[str]) -> Records:
-		yield from run_external(path, name, args)
-
-	return Command(name, run, f"Run {path}", f"{name} [ARGS]", source=True, origin="external")
-
-
-def resolve_command(name: str, allow_external: bool = True) -> Command | None:
-	"""Registered command first, then (optionally) a program on PATH."""
-	cmd = COMMANDS.get(name)
-	if cmd is None and allow_external:
-		cmd = external_command(name)
-	return cmd
+def resolve_command(name: str) -> Command | None:
+	"""A registered command. Programs on PATH run only through `ext`."""
+	return COMMANDS.get(name)
 
 
 def run_external(path: str, name: str, args: list[str]) -> Records:
@@ -1518,8 +1503,6 @@ def run_external(path: str, name: str, args: list[str]) -> Records:
 def iter_pipeline(
 	parsed: list[tuple[str, list[str]]],
 	records: Records | None = None,
-	*,
-	allow_external: bool = True,
 ) -> Records:
 	"""Run parsed stages and yield records. No auto-sink, no history."""
 	global _pipeline_index
@@ -1529,10 +1512,10 @@ def iter_pipeline(
 	stream: Records = iter(()) if records is None else records
 	resolved: list[tuple[Command, list[str]]] = []
 	for name, args in parsed:
-		cmd = resolve_command(name, allow_external)
+		cmd = resolve_command(name)
 		if cmd is None:
 			raise ShellError("cmd.not_found", f"command not found: {name}",
-							 "run `help` for built-ins, or `search` / `install NAME` for extras")
+							 "run `help` for built-ins, `ext PROGRAM` for a program on PATH")
 		resolved.append((cmd, args))
 	for position, (cmd, args) in enumerate(resolved, start=1):
 		if cmd.source and position != 1 and not cmd.filter:
@@ -1554,13 +1537,12 @@ def run_pipeline_records(line: str, records: Records | None = None) -> list[Json
 	while parsed and parsed[-1][0] == "to":
 		parsed.pop()
 	for name, _args in parsed:
-		if name in ("ai", "pip"):
+		if name in ("ai", "pip", "ext"):
 			raise ShellError("ai.recursive", f"generated pipeline must not call `{name}`",
 							 "ask for ls / where / sort / take instead")
 	saved = _pipeline_index
-	# `ai` output must never reach external programs.
 	try:
-		return list(iter_pipeline(parsed, records, allow_external=False))
+		return list(iter_pipeline(parsed, records))
 	finally:
 		_pipeline_index = saved
 
@@ -1582,7 +1564,7 @@ def run_line(line: str) -> Records:
 		parsed.pop()
 	for name, args in parsed:
 		cmd = resolve_command(name)
-		if cmd is not None and cmd.origin != "external" and "--help" in args:
+		if cmd is not None and "--help" in args:
 			buffer = io.StringIO()
 			saved_stdout = sys.stdout
 			sys.stdout = buffer
@@ -1621,8 +1603,8 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
 			cmd = resolve_command(name)
 			if cmd is None:
 				raise ShellError("cmd.not_found", f"command not found: {name}",
-								 "run `help` for built-ins, or `search` / `install NAME` for extras")
-			if "--help" in args and cmd.origin != "external":
+								 "run `help` for built-ins, `ext PROGRAM` for a program on PATH")
+			if "--help" in args:
 				show_command_help(cmd)
 				return 0
 

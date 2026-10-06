@@ -39,7 +39,7 @@ DEFAULT_MODELS = {
 }
 
 SAMPLE_LIMIT = 100
-SKIP_COMMANDS = {"ai", "to", "json", "reload", "install", "remove", "pip"}
+SKIP_COMMANDS = {"ai", "to", "json", "reload", "install", "remove", "pip", "ext"}
 SECRET_NAME_RE = re.compile(r"(key|token|secret|password|passwd|authorization)", re.I)
 
 
@@ -159,7 +159,7 @@ def _system_prompt(*, as_pipeline: bool, has_input: bool) -> str:
         return (
             "You write Open Shell pipelines. Open Shell pipes JSON records, not text.\n"
             "Reply with ONLY the pipeline on one line. No markdown, no explanation.\n"
-            "Do not use ai, to, json, reload, install, remove, or pip.\n"
+            "Do not use ai, to, json, reload, install, remove, pip, or ext.\n"
             "Sort with `sort .FIELD [--desc]`. Never write sort-by.\n"
             "No input records. Write a full pipeline that starts with a source command.\n\n"
             "Commands:\n"

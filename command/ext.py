@@ -22,7 +22,8 @@ def ext(_input: Records, args: list[str]) -> Records:
 
 
 @ext.complete
-d"""Complete the program name. Later words are the program's own arguments."""
+def _complete(ctx: Completion) -> list[str]:
+	"""Complete the program name. Later words are the program's own arguments."""
 	if len(ctx.tokens) > 1:
 		return []
 	names: list[str] = []
@@ -42,4 +43,3 @@ d"""Complete the program name. Later words are the program's own arguments."""
 				seen.add(entry)
 				names.append(entry)
 	return names
-	return os.path.isfile(path) and os.access(path, os.X_OK)

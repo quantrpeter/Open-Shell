@@ -18,6 +18,8 @@ sys.path.insert(0, str(HERE))
 
 _history = tempfile.TemporaryDirectory()
 os.environ["OSHELL_HISTORY"] = str(Path(_history.name) / "history")
+_settings = tempfile.TemporaryDirectory()
+os.environ["OSHELL_ENV"] = str(Path(_settings.name) / "settings.json")
 
 import openshell  # noqa: E402
 
@@ -133,6 +135,21 @@ class RpcTests(unittest.TestCase):
 	def test_unknown_method(self) -> None:
 		_, response = self.client.call("nope")
 		self.assertEqual(response["error"]["code"], "rpc.unknown_method")
+
+	def test_settings_round_trip(self) -> None:
+		_, listed = self.client.call("settings", action="list")
+		self.assertEqual(listed["result"]["settings"], [])
+		_, added = self.client.call("settings", action="set", name="ai", value="xai")
+		self.assertEqual(added["result"]["settings"], [{"name": "ai", "value": "xai"}])
+		_, renamed = self.client.call("settings", action="set", name="ai_key", value="secret")
+		names = [item["name"] for item in renamed["result"]["settings"]]
+		self.assertEqual(names, ["ai", "ai_key"])
+		_, removed = self.client.call("settings", action="delete", name="ai")
+		self.assertEqual(removed["result"]["settings"], [{"name": "ai_key", "value": "secret"}])
+		_, missing = self.client.call("settings", action="delete", name="ai")
+		self.assertEqual(missing["error"]["code"], "settings.missing")
+		_, bad = self.client.call("settings", action="set", name="-nope", value="x")
+		self.assertEqual(bad["error"]["code"], "arg.bad")
 
 	def test_shutdown_exits_with_status_zero(self) -> None:
 		# A blocked stdin reader thread used to make interpreter shutdown abort (SIGABRT).

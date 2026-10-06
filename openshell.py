@@ -53,7 +53,7 @@ __all__ = [
 	"iter_file_lines", "iter_processes", "literal", "load_env",
 	"parse_args", "parse_pipeline", "pipeline_index", "print_default_help",
 	"registry_root", "reload_commands", "remove_user_command",
-	"run_pipeline_records", "save_settings", "env_path",
+	"run_pipeline_records", "save_settings", "env_path", "settings_snapshot",
 	"show_command_help", "complete_line", "Completion",
 	"sort_key", "ssl_context", "use_color", "user_command_dir",
 	"user_package_dir", "IS_WINDOWS", "bootstrap", "cancel_event",
@@ -224,7 +224,10 @@ GITHUB_REPO_RE = re.compile(
 
 
 def env_path() -> Path:
-	"""Where Open Shell user settings are stored."""
+	"""Where Open Shell user settings are stored. `OSHELL_ENV` overrides it."""
+	override = os.environ.get("OSHELL_ENV")
+	if override:
+		return Path(override).expanduser()
 	return Path.home() / ".openshell"
 
 
@@ -261,6 +264,51 @@ def save_settings() -> None:
 	except OSError as err:
 		raise ShellError("settings.write_failed", f"cannot write {path}: {err}",
 						 "check ~/.openshell permissions") from err
+
+
+def settings_snapshot() -> list[dict[str, Json]]:
+	"""Every setting, as `{name, value}` records, names sorted."""
+	return [{"name": name, "value": ENV[name]} for name in sorted(ENV, key=str)]
+
+
+def _setting_name(name: Any) -> str:
+	if not isinstance(name, str) or not name or name.startswith("-"):
+		raise ShellError("arg.bad", f"bad setting name {name!r}",
+						 "use a name such as ai, ai_key, mysql_host")
+	return name
+
+
+def settings_list() -> dict[str, Any]:
+	"""Reload `~/.openshell` and return its settings. A read problem is raised."""
+	problem = load_env()
+	if problem is not None:
+		raise problem
+	return {"settings": settings_snapshot()}
+
+
+def settings_put(name: Any, value: Any) -> dict[str, Any]:
+	"""Set one setting and save. The value is stored as given, not parsed."""
+	key = _setting_name(name)
+	problem = load_env()
+	if problem is not None:
+		raise problem
+	ENV[key] = value
+	save_settings()
+	return {"settings": settings_snapshot()}
+
+
+def settings_delete(name: Any) -> dict[str, Any]:
+	"""Remove one setting and save. Missing names are an error."""
+	key = _setting_name(name)
+	problem = load_env()
+	if problem is not None:
+		raise problem
+	if key not in ENV:
+		raise ShellError("settings.missing", f"no setting named {key!r}",
+						 "the file may have changed; reload and try again")
+	del ENV[key]
+	save_settings()
+	return {"settings": settings_snapshot()}
 
 
 def user_command_dir() -> Path:
@@ -1722,7 +1770,7 @@ def repl() -> int:
 #             {"id": 1, "event": "error", "error": {...}}
 #   response  {"id": 1, "result": {...}}  or  {"id": 1, "error": {...}}
 #
-# Methods: info, run, complete, history, cancel (soft), shutdown. One request
+# Methods: info, run, complete, history, settings, cancel (soft), shutdown. One request
 # runs at a time; `cancel` is read on its own thread. A host that needs a hard
 # stop kills the process (cwd and $PWD are per-process state).
 # --------------------------------------------------------------------------
@@ -1839,6 +1887,19 @@ def _rpc_info(problems: list[ShellError]) -> dict[str, Any]:
 		],
 		"problems": [problem.to_record() for problem in problems],
 	}
+
+
+def _rpc_settings(params: dict[str, Any]) -> dict[str, Any]:
+	"""List, set or delete one `~/.openshell` setting. Set stores the value as given."""
+	action = params.get("action", "list")
+	if action == "list":
+		return settings_list()
+	if action == "set":
+		return settings_put(params.get("name"), params.get("value"))
+	if action == "delete":
+		return settings_delete(params.get("name"))
+	raise ShellError("rpc.bad_params", f"unknown settings action: {action!r}",
+					 "use list, set or delete")
 
 
 def _rpc_complete(params: dict[str, Any]) -> dict[str, Any]:
@@ -1982,12 +2043,14 @@ def rpc_serve(problems: list[ShellError] | None = None) -> int:
 				emit({"id": rid, "result": _rpc_complete(params)})
 			elif method == "history":
 				emit({"id": rid, "result": {"history": history_commands()}})
+			elif method == "settings":
+				emit({"id": rid, "result": _rpc_settings(params)})
 			elif method == "shutdown":
 				emit({"id": rid, "result": {}})
 				return 0
 			else:
 				raise ShellError("rpc.unknown_method", f"unknown method: {method!r}",
-								 "use info, run, complete, history, cancel or shutdown")
+								 "use info, run, complete, history, settings, cancel or shutdown")
 		except ShellError as err:
 			emit({"id": rid, "error": err.to_record()})
 		except (BrokenPipeError, ConnectionResetError):

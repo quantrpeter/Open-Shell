@@ -27,23 +27,13 @@ def ls(_input: Records, args: list[str]) -> Records:
 			raise ShellError("fs.not_found", f"no such path: {target}",
 							 "check the path, or run `ls` with no arguments")
 		if target.is_file():
-			record = file_record(target)
-			record = filterObject(record)
-			if record is not None:
-				yield record
+			yield file_record(target)
 			continue
 		entries = target.rglob("*") if recursive else target.iterdir()
 		for path in sorted(entries, key=lambda p: p.name.lower()):
 			if not show_hidden and path.name.startswith("."):
 				continue
-			record = file_record(path)
-			record = filterObject(record)
-			if record is not None:
-				yield record
-
-def filterObject(obj):
-	del obj["fullpath"]
-	return obj
+			yield file_record(path)
 
 
 @ls.help

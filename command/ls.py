@@ -40,6 +40,7 @@ def ls(_input: Records, args: list[str]) -> Records:
 def ls_help() -> None:
 	print("ls [PATH …] [-r|--recursive] [-a|--all] [-l|--long]")
 	print("  List files as JSON records. PATH defaults to the current directory.")
+	print("  `*`, `?`, and `[…]` expand. `ls *.png` searches subfolders too.")
 	print("  -r, --recursive	Walk directories")
 	print("  -a, --all		  Include hidden names")
 	print("  -l, --long		 Long listing (accepted; size is always present)")

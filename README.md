@@ -99,7 +99,7 @@ Errors are records, never raw tracebacks:
 |---|---|---|
 | `pwd` | `pwd` | Print the working directory |
 | `echo` | `echo [TEXT …]` | Emit arguments as a record |
-| `ls` | `ls [PATH …] [-r] [-a] [-l]` | List files as records |
+| `ls` | `ls [PATH …] [-r] [-a] [-l]` | List files as records; `*.png` searches subfolders, `dir/*.png` does not |
 | `cd` | `cd [PATH]` | Change the working directory |
 | `mkdir` | `mkdir [-p] PATH …` | Create directories |
 | `cp` | `cp [-r] SRC … DEST` | Copy files or directories |
@@ -110,7 +110,7 @@ Errors are records, never raw tracebacks:
 | `head` | `head [-n N] FILE` | First N lines (default 10) |
 | `tail` | `tail [-n N] FILE` | Last N lines (default 10) |
 | `grep` | `grep [-i] [-v] [-F] [-w] [-c] [-n] [--field FIELD] [.FIELD] PATTERN [FILE …]` | Search files, or filter pipeline records |
-| `find` | `find [PATH] [-name GLOB] [-type f\|d] [-size SIZE] [-mtime DAYS]` | Search for files |
+| `find` | `find [PATH] [GLOB] [-name GLOB] [-type f\|d] [-size SIZE] [-mtime DAYS] [-d N]` | Search for files; `find . *.png` filters by name; `-d` limits depth |
 | `ps` | `ps [aux]` | List running processes |
 | `top` / `htop` | `top [-n N]` | List processes by CPU usage |
 | `kill` | `kill [-SIGNAL] PID …` | Terminate a process |

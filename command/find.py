@@ -15,10 +15,37 @@ def _mtime_days(path: Path) -> float:
 	return (time.time() - path.stat().st_mtime) / 86400
 
 
+def _walk(root: Path, max_depth: int | None):
+	"""Yield root, then descendants. Depth 1 is root's children.
+
+	`max_depth` is the deepest relative level to enter. `None` walks everything.
+	A file root yields only itself.
+	"""
+	yield root
+	if not root.is_dir():
+		return
+	# (directory, depth of that directory). Children live one level deeper.
+	stack: list[tuple[Path, int]] = [(root, 0)]
+	while stack:
+		current, depth = stack.pop()
+		if max_depth is not None and depth >= max_depth:
+			continue
+		try:
+			children = sorted(current.iterdir(), key=lambda item: item.name.lower())
+		except OSError:
+			continue
+		child_depth = depth + 1
+		# Push in reverse so a pop walks names in sorted order.
+		for child in reversed(children):
+			yield child
+			if child.is_dir():
+				stack.append((child, child_depth))
+
+
 @command(
 	"find",
 	"Search for files by name, size, or age",
-	"find [PATH] [-name GLOB] [-type f|d] [-size SIZE] [-mtime DAYS]",
+	"find [PATH] [-name GLOB] [-type f|d] [-size SIZE] [-mtime DAYS] [-d|--depth N]",
 	source=True,
 )
 def find(_input: Records, args: list[str]) -> Records:
@@ -29,6 +56,7 @@ def find(_input: Records, args: list[str]) -> Records:
 			"-type": "type", "--type": "type",
 			"-size": "size", "--size": "size",
 			"-mtime": "mtime", "--mtime": "mtime",
+			"-d": "depth", "--depth": "depth",
 		},
 	)
 	root = expand_path(paths[0]) if paths else Path(".")
@@ -37,6 +65,12 @@ def find(_input: Records, args: list[str]) -> Records:
 						 "check the path")
 
 	name_glob = opts.get("name")
+	# `find . *.png` and `find . -name *.png` both filter by name.
+	if name_glob is None:
+		for path in paths[1:]:
+			if any(char in path for char in "*?["):
+				name_glob = path
+				break
 	kind = opts.get("type")
 	if kind is not None and kind not in ("f", "d"):
 		raise ShellError("arg.bad", f"find: unknown -type {kind!r}",
@@ -57,8 +91,18 @@ def find(_input: Records, args: list[str]) -> Records:
 			raise ShellError("arg.bad", f"find: bad -mtime {opts['mtime']!r}",
 							 "pass a number of days, e.g. find . -mtime 7") from err
 
-	entries = [root] if root.is_file() else root.rglob("*")
-	for path in entries:
+	max_depth = None
+	if "depth" in opts:
+		try:
+			max_depth = int(opts["depth"])
+		except ValueError as err:
+			raise ShellError("arg.bad", f"find: bad depth {opts['depth']!r}",
+							 "pass an integer, e.g. find . -d 2") from err
+		if max_depth < 0:
+			raise ShellError("arg.bad", "find: depth must be >= 0",
+							 "0 lists only the start path; 1 lists its children")
+
+	for path in _walk(root, max_depth):
 		try:
 			is_dir = path.is_dir()
 			if kind == "f" and is_dir:

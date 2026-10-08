@@ -1191,6 +1191,117 @@ def expand_path(text: str) -> Path:
 	return Path(text).expanduser()
 
 
+def is_glob(text: str) -> bool:
+	"""True when a token contains `*`, `?`, or `[…]`."""
+	return any(char in text for char in "*?[")
+
+
+def _glob_pattern(token: str) -> str | None:
+	"""The filesystem pattern inside a word, or None when nothing should expand.
+
+	`*.png` expands. `"*.png"` does not — a quote anywhere in the pattern keeps
+	it literal, including `where .name == "*.png"`. `"dir a"/*.png` does expand:
+	the quoted head is a directory and the unquoted tail is the pattern.
+	"""
+	if not is_glob(token):
+		return None
+	pattern: list[str] = []
+	quote: str | None = None
+	escaped = False
+	for char in token:
+		if escaped:
+			pattern.append(char)
+			escaped = False
+			continue
+		if char == "\\" and not IS_WINDOWS:
+			escaped = True
+			continue
+		if quote:
+			if char == quote:
+				quote = None
+			else:
+				pattern.append(char)
+			continue
+		if char in "\"'":
+			# `"*.png"` is literal. `"dir a"/*.png` is not: the quote closed
+			# before the pattern.
+			rest = token[len(pattern):]
+			quoted_glob = False
+			mark: str | None = char
+			for later in rest[1:]:
+				if mark:
+					if later == mark:
+						mark = None
+					elif later in "*?[":
+						quoted_glob = True
+				elif later in "\"'":
+					mark = later
+			if quoted_glob:
+				return None
+			quote = char
+			continue
+		pattern.append(char)
+	if quote or not is_glob("".join(pattern)):
+		return None
+	return "".join(pattern)
+
+
+def _expand_stage_globs(stage: str) -> str:
+	"""Replace unquoted glob words with their matches, each shell-quoted.
+
+	`ls "*.png"` stays a literal path. A pattern that matches nothing is left
+	unchanged and fails later as a missing path.
+	"""
+	out: list[str] = []
+	word: list[str] = []
+	quote: str | None = None
+	escaped = False
+
+	def flush() -> None:
+		token = "".join(word)
+		word.clear()
+		pattern = _glob_pattern(token)
+		if pattern is None:
+			out.append(token)
+			return
+		path = expand_path(pattern)
+		# `*.png` has no directory, so search the tree. `sub/*.png` stays in `sub`.
+		globber = path.parent.rglob if path.parent == Path(".") else path.parent.glob
+		matches = sorted(globber(path.name), key=lambda item: str(item).lower())
+		if not path.name.startswith("."):
+			matches = [item for item in matches if not item.name.startswith(".")]
+		if not matches:
+			out.append(token)
+			return
+		out.append(" ".join(shlex.quote(str(item)) for item in matches))
+
+	for char in stage:
+		if escaped:
+			word.append(char)
+			escaped = False
+			continue
+		if char == "\\" and not IS_WINDOWS:
+			escaped = True
+			word.append(char)
+			continue
+		if quote:
+			word.append(char)
+			if char == quote:
+				quote = None
+			continue
+		if char in "\"'":
+			quote = char
+			word.append(char)
+			continue
+		if char in " \t":
+			flush()
+			out.append(char)
+			continue
+		word.append(char)
+	flush()
+	return "".join(out)
+
+
 def human_size(n: int | float) -> str:
 	"""Render a byte count as `1.5M`, `12K`, …"""
 	value = float(n)
@@ -1465,12 +1576,20 @@ def split_stages(line: str) -> list[str]:
 
 
 def parse_pipeline(line: str) -> list[tuple[str, list[str]]]:
-	"""Split a pipeline into `(command, args)` stages."""
+	"""Split a pipeline into `(command, args)` stages.
+
+	Unquoted globs expand here, before words are split, so `ls *a*` can match
+	`dir a/file` without the space becoming a second argument.
+	"""
 	parsed: list[tuple[str, list[str]]] = []
 	for stage in split_stages(line):
 		if not stage:
 			continue
-		tokens = _shlex_split(stage, comments=True)
+		# `find . *.png` is a name filter. Expanding it first lists every match
+		# as a path and the filter never runs.
+		head = _shlex_split(stage, comments=True)
+		expanded = stage if head and head[0] == "find" else _expand_stage_globs(stage)
+		tokens = _shlex_split(expanded, comments=True)
 		if tokens:
 			parsed.append((tokens[0], tokens[1:]))
 	return parsed

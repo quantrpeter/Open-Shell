@@ -90,11 +90,19 @@ def to(records: Records, args: list[str]) -> tuple[Json, ...]:
 			sys.stdout.write(
 				json.dumps(record, default=str, separators=separators) + "\n")
 	elif fmt == "table":
-		rows = list(records)
+		rows: list[Json] = []
+		failure: ShellError | None = None
+		try:
+			for record in records:
+				rows.append(record)
+		except ShellError as err:
+			failure = err  # show what arrived before the failure, then report it
 		if rows:
 			render_table(rows)
-		else:
+		elif failure is None:
 			sys.stdout.write("(no records)\n")
+		if failure is not None:
+			raise failure
 	else:
 		raise ShellError("to.unknown_format", f"unknown output format: {fmt!r}",
 						 "supported formats: json, table")

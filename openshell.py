@@ -673,6 +673,8 @@ def complete_line(line: str, end: int | None = None) -> list[str]:
 	word = ctx.word
 	if not ctx.tokens:
 		names = list(COMMANDS) + list(REPL_WORDS)
+		if word:
+			names += path_program_names()
 		return _filter_prefix(names, word)
 	custom = _custom_matches(ctx)
 	if custom is None:
@@ -1618,9 +1620,46 @@ def _stage_records(records: Records, index: int) -> Records:
         return
 
 
+EXTERNAL_ORIGIN = "external"
+
+
+def _external_command(name: str) -> Command | None:
+	"""A program on PATH (or given by path) wrapped as a source command."""
+	path = shutil.which(name)
+	if path is None:
+		return None
+
+	def run(_input: Records, args: list[str]) -> Records:
+		yield from run_external(path, name, args)
+
+	return Command(name, run, f"Run {path}", f"{name} [ARGS …]",
+				   source=True, origin=EXTERNAL_ORIGIN)
+
+
 def resolve_command(name: str) -> Command | None:
-	"""A registered command. Programs on PATH run only through `ext`."""
-	return COMMANDS.get(name)
+	"""A registered command first; otherwise a program on PATH."""
+	return COMMANDS.get(name) or _external_command(name)
+
+
+def path_program_names() -> list[str]:
+	"""Names of executables on PATH, for Tab completion of the first word."""
+	names: list[str] = []
+	seen: set[str] = set()
+	for folder in os.environ.get("PATH", "").split(os.pathsep):
+		if not folder:
+			continue
+		try:
+			entries = os.listdir(folder)
+		except OSError:
+			continue
+		for entry in entries:
+			if entry in seen:
+				continue
+			if os.access(os.path.join(folder, entry), os.X_OK) \
+					and os.path.isfile(os.path.join(folder, entry)):
+				seen.add(entry)
+				names.append(entry)
+	return names
 
 
 def run_external(path: str, name: str, args: list[str]) -> Records:
@@ -1682,7 +1721,7 @@ def iter_pipeline(
 		cmd = resolve_command(name)
 		if cmd is None:
 			raise ShellError("cmd.not_found", f"command not found: {name}",
-							 "run `help` for built-ins, `ext PROGRAM` for a program on PATH")
+							 "run `help` for built-in commands")
 		resolved.append((cmd, args))
 	for position, (cmd, args) in enumerate(resolved, start=1):
 		if cmd.source and position != 1 and not cmd.filter:
@@ -1704,7 +1743,8 @@ def run_pipeline_records(line: str, records: Records | None = None) -> list[Json
 	while parsed and parsed[-1][0] == "to":
 		parsed.pop()
 	for name, _args in parsed:
-		if name in ("ai", "pip", "ext"):
+		cmd = resolve_command(name)
+		if name in ("ai", "pip") or (cmd is not None and cmd.origin == EXTERNAL_ORIGIN):
 			raise ShellError("ai.recursive", f"generated pipeline must not call `{name}`",
 							 "ask for ls / where / sort / take instead")
 	saved = _pipeline_index
@@ -1731,7 +1771,7 @@ def run_line(line: str) -> Records:
 		parsed.pop()
 	for name, args in parsed:
 		cmd = resolve_command(name)
-		if cmd is not None and "--help" in args:
+		if cmd is not None and cmd.origin != EXTERNAL_ORIGIN and "--help" in args:
 			buffer = io.StringIO()
 			saved_stdout = sys.stdout
 			sys.stdout = buffer
@@ -1770,8 +1810,8 @@ def run_pipeline(line: str, *, force_json: bool = False) -> int:
 			cmd = resolve_command(name)
 			if cmd is None:
 				raise ShellError("cmd.not_found", f"command not found: {name}",
-								 "run `help` for built-ins, `ext PROGRAM` for a program on PATH")
-			if "--help" in args:
+								 "run `help` for built-in commands")
+			if cmd.origin != EXTERNAL_ORIGIN and "--help" in args:
 				show_command_help(cmd)
 				return 0
 

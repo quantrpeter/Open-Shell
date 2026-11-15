@@ -41,7 +41,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 # The surface a command file may rely on: `from openshell import ...`
 __all__ = [
